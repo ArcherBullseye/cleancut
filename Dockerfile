@@ -43,6 +43,18 @@ ENV PYTHONPATH=/app \
 
 RUN mkdir -p /app/data /media/network /media/home
 
+# Fail the build, not the first scan. A packaged image that is missing the
+# wordlists still starts and still accepts jobs -- it just kills every scan
+# with an import error, which is how cleancut/data once shipped absent.
+RUN python -c "\
+from cleancut.config import Config; \
+from cleancut.cli import main; \
+import webapp.app as a; \
+c = Config.load_defaults(); \
+assert c.wordlists, 'wordlists.json missing from the image'; \
+assert c.replacements, 'replacements.json missing from the image'; \
+print('startup check ok: version', a.APP_VERSION, '|', len(c.wordlists), 'wordlist categories')"
+
 EXPOSE 3000
 
 CMD ["python", "-m", "webapp.app"]
