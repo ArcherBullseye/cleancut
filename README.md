@@ -54,6 +54,15 @@ Umbrel puts every app on one bridge network, so the default host is
 `http://ollama_ollama_1:11434`. Pull `llama3.1:8b` and `llava:7b` to use them.
 Settings → Test connection reports what Ollama actually has.
 
+## If the library looks empty
+
+The app bind-mounts the Umbrel's whole `network` directory, and Docker copies
+the network shares mounted underneath it when the container starts. If a share
+is mounted (or re-mounted, after a NAS reboot or a network blip) *after* the
+container is already running, the container keeps its older view and the folder
+looks empty. Restarting the app from the Umbrel dashboard re-creates the mount
+and picks the share back up.
+
 ## Layout
 
     cleancut/    vendored upstream package (see PATCHES.md)
