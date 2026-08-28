@@ -22,7 +22,13 @@ RUN pip install --no-cache-dir \
         torch==2.5.1
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# openai-whisper ships an sdist whose setup.py imports pkg_resources, which
+# setuptools 81 removed. pip builds it in an isolated environment that pulls
+# the newest setuptools, so the pin has to reach *that* env -- PIP_CONSTRAINT
+# does; a line in requirements.txt would not.
+RUN printf 'setuptools<81\n' > /tmp/pip-constraint.txt \
+    && PIP_CONSTRAINT=/tmp/pip-constraint.txt pip install --no-cache-dir -r requirements.txt \
+    && rm /tmp/pip-constraint.txt
 
 COPY cleancut/ ./cleancut/
 COPY webapp/ ./webapp/
