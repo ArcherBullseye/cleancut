@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
-data/
+# Anchored to the repo root: an unanchored `data/` also matches
+# cleancut/data/, which holds the wordlists the detector needs.
+/data/
 *.egg-info/
 .pytest_cache/

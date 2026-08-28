@@ -1,7 +1,9 @@
 .git
 .github
 tests
-data
+# Anchored, for the same reason as .gitignore: the package's own
+# cleancut/data/ must reach the image.
+/data
 *.md
 !README.md
 __pycache__
