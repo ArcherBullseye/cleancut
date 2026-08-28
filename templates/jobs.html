@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Jobs - cleancut{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <h1>Jobs</h1>
+    <a class="button ghost" href="/">New scan</a>
+  </div>
+  <div id="jobs" class="jobs"><p class="muted">Loading...</p></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='jobs.js') }}"></script>{% endblock %}

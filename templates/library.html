@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Library - cleancut{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <h1>Choose a video</h1>
+    <input id="search" type="search" placeholder="Search the library..." autocomplete="off">
+  </div>
+  <div id="crumbs" class="crumbs"></div>
+  <div id="listing" class="listing"><p class="muted">Loading...</p></div>
+</section>
+
+<section class="panel" id="scan-panel" hidden>
+  <h2>Scan <span id="scan-title" class="mono"></span></h2>
+
+  <div class="field">
+    <label>Preset</label>
+    <div class="presets" id="presets">
+      <label class="preset">
+        <input type="radio" name="preset" value="fast">
+        <span class="preset-name">Fast</span>
+        <span class="preset-desc">Whisper base, no LLM or vision. Roughly 15-30 min for a feature.</span>
+      </label>
+      <label class="preset">
+        <input type="radio" name="preset" value="balanced" checked>
+        <span class="preset-name">Balanced</span>
+        <span class="preset-desc">Whisper small, word-precise mutes, density clustering. 1-2 hours.</span>
+      </label>
+      <label class="preset">
+        <input type="radio" name="preset" value="thorough">
+        <span class="preset-name">Thorough</span>
+        <span class="preset-desc">Everything, including Ollama LLM and vision. Very slow on this hardware -- expect the better part of a day.</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Categories to detect</label>
+    <div class="chips" id="categories"></div>
+  </div>
+
+  <div class="field">
+    <label>What to do with each</label>
+    <div class="actions-grid" id="actions"></div>
+  </div>
+
+  <details class="advanced">
+    <summary>Advanced</summary>
+    <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
+    <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow visual-only cuts without corroboration</label>
+    <label class="check"><input type="checkbox" id="auto-render"> Render automatically when the scan finishes (skips review)</label>
+    <label class="inline">Audio language
+      <input type="text" id="prefer-language" value="eng" size="5">
+    </label>
+  </details>
+
+  <div class="row">
+    <button id="start-scan" class="primary">Start scan</button>
+    <button id="cancel-pick" class="ghost">Cancel</button>
+  </div>
+  <p class="muted small">Scans run one at a time on the server. You can close this page -- progress is kept.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='library.js') }}"></script>{% endblock %}

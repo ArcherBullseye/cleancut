@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} - cleancut{% endblock %}
+{% block content %}
+<section class="panel" data-job-id="{{ job.id }}" id="job-root">
+  <div class="panel-head">
+    <div>
+      <h1 id="job-title">{{ job.title }}</h1>
+      <p class="muted mono small" id="job-path">{{ job.video_path }}</p>
+    </div>
+    <div class="row">
+      <span id="job-status" class="pill">{{ job.status }}</span>
+      <button id="cancel-job" class="ghost" hidden>Cancel</button>
+    </div>
+  </div>
+
+  <div id="progress-box">
+    <div class="stage-row">
+      <span id="job-stage" class="stage">{{ job.stage }}</span>
+      <span id="job-elapsed" class="muted small"></span>
+    </div>
+    <div class="bar"><div id="job-bar" class="bar-fill"></div></div>
+  </div>
+
+  <p id="job-error" class="error" hidden></p>
+
+  <div class="row" id="job-actions"></div>
+
+  <details id="log-box">
+    <summary>Log</summary>
+    <pre id="job-log" class="log"></pre>
+  </details>
+</section>
+
+<section class="panel" id="review-panel" hidden>
+  <div class="panel-head">
+    <h2>Review</h2>
+    <div class="row">
+      <button class="ghost" data-bulk="accept">Accept all</button>
+      <button class="ghost" data-bulk="reject">Reject all</button>
+      <button class="ghost" id="add-cut-toggle">Add a cut</button>
+    </div>
+  </div>
+
+  <div id="summary" class="summary"></div>
+
+  <form id="add-cut" class="add-cut" hidden>
+    <input type="text" name="start" placeholder="start (1:02:33)" required>
+    <input type="text" name="end" placeholder="end (1:03:10)" required>
+    <select name="category">
+      <option value="sex">sex</option>
+      <option value="nudity">nudity</option>
+      <option value="profanity">profanity</option>
+      <option value="drugs">drugs</option>
+      <option value="violence">violence</option>
+    </select>
+    <select name="action">
+      <option value="cut">cut</option>
+      <option value="mute">mute</option>
+    </select>
+    <input type="text" name="reason" placeholder="reason (optional)">
+    <button class="primary" type="submit">Add</button>
+  </form>
+
+  <div class="filters">
+    <label class="check"><input type="checkbox" id="hide-rejected"> Hide rejected</label>
+    <label class="inline">Category
+      <select id="filter-category"><option value="">all</option></select>
+    </label>
+  </div>
+
+  <div id="decisions" class="decisions"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='job.js') }}"></script>{% endblock %}

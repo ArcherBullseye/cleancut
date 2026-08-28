@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="cleancut">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b6cf6"/>
+      <stop offset="1" stop-color="#1b3f9e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- film strip -->
+  <rect x="96" y="150" width="320" height="212" rx="20" fill="#0d1117" opacity="0.92"/>
+  <g fill="#2b6cf6" opacity="0.85">
+    <rect x="116" y="172" width="26" height="24" rx="6"/>
+    <rect x="116" y="216" width="26" height="24" rx="6"/>
+    <rect x="116" y="260" width="26" height="24" rx="6"/>
+    <rect x="116" y="304" width="26" height="24" rx="6"/>
+    <rect x="370" y="172" width="26" height="24" rx="6"/>
+    <rect x="370" y="216" width="26" height="24" rx="6"/>
+    <rect x="370" y="260" width="26" height="24" rx="6"/>
+    <rect x="370" y="304" width="26" height="24" rx="6"/>
+  </g>
+
+  <!-- the cut: a dashed line through the frame -->
+  <line x1="176" y1="256" x2="336" y2="256" stroke="#e6edf3" stroke-width="14"
+        stroke-linecap="round" stroke-dasharray="30 26"/>
+
+  <!-- scissors -->
+  <g stroke="#ffffff" stroke-width="18" stroke-linecap="round" fill="none">
+    <line x1="196" y1="196" x2="300" y2="300"/>
+    <line x1="196" y1="316" x2="300" y2="212"/>
+  </g>
+  <circle cx="186" cy="188" r="20" fill="none" stroke="#ffffff" stroke-width="17"/>
+  <circle cx="186" cy="324" r="20" fill="none" stroke="#ffffff" stroke-width="17"/>
+  <circle cx="308" cy="256" r="13" fill="#ffffff"/>
+</svg>

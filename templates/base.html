@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}cleancut{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <img src="{{ url_for('static', filename='icon.svg') }}" alt="" width="28" height="28">
+      <span>cleancut</span>
+    </a>
+    <nav>
+      <a href="/" class="{{ 'on' if page == 'library' }}">Library</a>
+      <a href="/jobs" class="{{ 'on' if page == 'jobs' }}">Jobs</a>
+      <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>
+    </nav>
+    <span class="version">v{{ version }}</span>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <div id="toast" class="toast" hidden></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

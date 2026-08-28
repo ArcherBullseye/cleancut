@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Settings - cleancut{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Settings</h1>
+  <p class="muted">Defaults for new scans and renders. Existing jobs keep the settings they started with.</p>
+
+  <div class="field">
+    <label for="preset">Default preset</label>
+    <select id="preset">
+      <option value="fast">Fast</option>
+      <option value="balanced">Balanced</option>
+      <option value="thorough">Thorough</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="ollama-host">Ollama host</label>
+    <input type="text" id="ollama-host" placeholder="http://ollama_ollama_1:11434">
+    <p class="muted small">
+      Powers the LLM dialogue and vision signals used by the Thorough preset. Leave blank to
+      turn both off. On Umbrel the Ollama app is reachable at
+      <code>http://ollama_ollama_1:11434</code>.
+    </p>
+    <div class="row">
+      <button id="test-ollama" class="ghost">Test connection</button>
+      <span id="ollama-status" class="muted small"></span>
+    </div>
+  </div>
+
+  <div class="two-up">
+    <div class="field">
+      <label for="llm-model">Dialogue model</label>
+      <input type="text" id="llm-model">
+    </div>
+    <div class="field">
+      <label for="vlm-model">Vision model</label>
+      <input type="text" id="vlm-model">
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Default categories</label>
+    <div class="chips" id="categories"></div>
+  </div>
+
+  <div class="field">
+    <label>Default action per category</label>
+    <div class="actions-grid" id="actions"></div>
+  </div>
+
+  <div class="two-up">
+    <div class="field">
+      <label for="quality">Render quality (CRF -- lower is better, larger)</label>
+      <input type="number" id="quality" min="14" max="32">
+    </div>
+    <div class="field">
+      <label for="output-dir">Output folder</label>
+      <input type="text" id="output-dir" placeholder="(app data)">
+      <p class="muted small">Absolute path inside the container, e.g.
+        <code>/media/network/NAS/Public/movies-clean</code>. Blank keeps output in the app's own
+        storage, downloadable from the job page.</p>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="subtitle-mode">Softened subtitles</label>
+    <select id="subtitle-mode">
+      <option value="soft">Toggleable track -- switch them on or off in your player</option>
+      <option value="burn">Burned into the picture -- always visible, cannot be removed</option>
+      <option value="none">No subtitles in the output</option>
+    </select>
+  </div>
+  <label class="check"><input type="checkbox" id="auto-render"> Render automatically after a scan, without review</label>
+
+  <div class="row">
+    <button id="save" class="primary">Save</button>
+    <span id="saved" class="muted small"></span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Server</h2>
+  <div id="health" class="mono small muted">Loading...</div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='settings.js') }}"></script>{% endblock %}

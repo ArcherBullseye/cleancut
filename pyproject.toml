@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cleancut"
+version = "0.1.0"
+description = "Auto-edit movies for content: mute/cut profanity, drug, and sex scenes with softened subtitles."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Dan Monahan" }]
+dependencies = [
+    "srt>=3.5.3",
+    "tqdm>=4.66.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+# Speech-to-text fallback when no .srt is provided.
+whisper = ["openai-whisper>=20231117"]
+# Visual nudity / explicit content detection.
+visual = ["nudenet>=3.4.2", "opencv-python>=4.9.0", "numpy>=1.26.0"]
+# Shot boundary detection.
+scenes = ["scenedetect[opencv]>=0.6.4"]
+# Local LLM dialogue classification via Ollama.
+llm = ["ollama>=0.4.0"]
+# Audio event detection (HuggingFace AST).
+audio = [
+    "transformers>=4.40.0",
+    "librosa>=0.10.0",
+    "torch>=2.2.0",
+    "numpy>=1.26.0",
+]
+# Everything.
+full = [
+    "openai-whisper>=20231117",
+    "nudenet>=3.4.2",
+    "opencv-python>=4.9.0",
+    "numpy>=1.26.0",
+    "scenedetect[opencv]>=0.6.4",
+    "torch>=2.2.0",
+    "ollama>=0.4.0",
+    "transformers>=4.40.0",
+    "librosa>=0.10.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "numpy>=1.26.0",
+    # Lightweight, pure-Python client needed by the llm_utils tests.
+    "ollama>=0.4.0",
+]
+
+[project.scripts]
+cleancut = "cleancut.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cleancut*"]
+
+[tool.setuptools.package-data]
+"cleancut.data" = ["*.json"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

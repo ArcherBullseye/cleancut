@@ -1,0 +1,26 @@
+# Web layer
+Flask==3.0.3
+waitress==3.0.0
+
+# cleancut core (from upstream pyproject)
+srt==3.5.3
+tqdm==4.66.5
+rich==13.9.4
+
+# Speech-to-text
+openai-whisper==20240930
+numpy==1.26.4
+
+# Visual detection + shot boundaries.
+# opencv-python-headless, not opencv-python: the GUI build pulls in an X11/GL
+# stack that a headless container has no use for.
+nudenet==3.4.2
+opencv-python-headless==4.10.0.84
+scenedetect==0.6.4
+
+# Local LLM / VLM via the Ollama app
+ollama==0.4.4
+
+# Audio event detection (HuggingFace AST)
+transformers==4.46.3
+librosa==0.10.2.post1
