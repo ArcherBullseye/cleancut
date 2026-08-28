@@ -1,11 +1,16 @@
 FROM python:3.11-slim
 
 # ffmpeg does every mute, cut and subtitle burn; libsndfile backs librosa's
-# audio loading; libgomp is torch's OpenMP runtime.
+# audio loading; libgomp is torch's OpenMP runtime. libgl1/libglib2 are only
+# needed if something in the tree resolves opencv-python instead of the headless
+# build -- a few MB against `import cv2` failing at runtime, which the pipeline
+# swallows as a warning and would silently skip the whole visual scan.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
         libgomp1 \
+        libgl1 \
+        libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

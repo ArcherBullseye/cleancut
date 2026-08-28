@@ -8,6 +8,7 @@ filesystem, so containment is enforced in one place.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -94,26 +95,33 @@ def list_dir(path: Path) -> dict[str, Any]:
     return {"path": str(path), "parent": parent, "dirs": dirs, "files": files, "error": None}
 
 
-def search(term: str, limit: int = 200) -> list[dict[str, Any]]:
+def search(term: str, limit: int = 200, max_dirs: int = 20_000) -> list[dict[str, Any]]:
     """Recursive filename search across the roots.
 
-    Libraries here are thousands of files deep; walking them fully on every
-    keystroke is why this is capped and case-folded rather than globbed.
+    os.walk with in-place pruning rather than rglob: the media root is usually a
+    network share holding a NAS's snapshot and recycle directories, and rglob
+    descends into those in full before any name filter gets to reject them. The
+    directory budget bounds a search that would otherwise crawl a mounted share
+    on every keystroke.
     """
     term = term.strip().lower()
     if len(term) < 2:
         return []
     hits: list[dict[str, Any]] = []
+    scanned = 0
     for root in allowed_roots():
-        for path in root.rglob("*"):
-            if len(hits) >= limit:
+        for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: None):
+            scanned += 1
+            if len(hits) >= limit or scanned > max_dirs:
                 return hits
-            name = path.name
-            if name.startswith(".") or name.startswith("@"):
-                continue
-            try:
-                if path.is_file() and is_video(path) and term in name.lower():
+            # Prune in place so os.walk never descends into them at all.
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and not d.startswith("@")]
+            for name in filenames:
+                if name.startswith(".") or term not in name.lower():
+                    continue
+                path = Path(dirpath) / name
+                if is_video(path):
                     hits.append(_entry(path, "file"))
-            except OSError:
-                continue
+                    if len(hits) >= limit:
+                        return hits
     return hits

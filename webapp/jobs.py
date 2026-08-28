@@ -57,6 +57,11 @@ _STAGE_MARKERS: list[tuple[str, str]] = [
 ]
 
 _PERCENT_RE = re.compile(r"(\d{1,3})%")
+# ffmpeg reports position, never a percentage -- against the probed duration
+# that becomes one. Without it the bar sits at zero for the whole encode.
+_FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d\d):(\d\d)(?:\.(\d+))?")
+# Transient ffmpeg status lines: worth a progress update, not a log entry each.
+_FFMPEG_STATUS_RE = re.compile(r"^(frame|size)=\s*\S")
 
 _procs: dict[int, subprocess.Popen] = {}
 _procs_lock = threading.Lock()
@@ -381,9 +386,7 @@ def _run_job(job: dict[str, Any]) -> None:
                 cwd=str(APP_ROOT),
                 env=_child_env(),
                 start_new_session=True,  # own process group, so cancel kills ffmpeg too
-                bufsize=1,
-                text=True,
-                errors="replace",
+                bufsize=0,
             )
         except OSError as e:
             update_job(job_id, status=FAILED, finished_at=time.time(),
@@ -394,31 +397,63 @@ def _run_job(job: dict[str, Any]) -> None:
         with _procs_lock:
             _procs[job_id] = proc
 
-        stage = ""
-        progress = 0.0
-        last_flush = 0.0
+        state = {"stage": "", "progress": 0.0, "flushed": 0.0, "logged": 0.0}
+
+        def handle(line: str) -> None:
+            now = time.time()
+            status_line = bool(_FFMPEG_STATUS_RE.match(line))
+            # ffmpeg emits a status line several times a second for hours. Keep
+            # a heartbeat in the log without writing gigabytes of it.
+            if not status_line or now - state["logged"] > 15.0:
+                if status_line:
+                    state["logged"] = now
+                fh.write(line + "\n")
+                fh.flush()
+
+            new_stage = _stage_for(line)
+            if new_stage and new_stage != state["stage"]:
+                state["stage"] = new_stage
+                state["progress"] = 0.0
+                update_job(job_id, stage=new_stage, progress=0)
+
+            pct = None
+            tm = _FFMPEG_TIME_RE.search(line)
+            if tm and duration > 0:
+                position = int(tm.group(1)) * 3600 + int(tm.group(2)) * 60 + int(tm.group(3))
+                pct = min(100.0, position / duration * 100.0)
+            else:
+                pm = _PERCENT_RE.search(line)
+                if pm:
+                    pct = min(100.0, float(pm.group(1)))
+            if pct is not None and abs(pct - state["progress"]) >= 1.0:
+                state["progress"] = pct
+                if now - state["flushed"] > 2.0:
+                    state["flushed"] = now
+                    update_job(job_id, progress=pct)
+
         try:
             assert proc.stdout is not None
-            for raw in proc.stdout:
-                # tqdm redraws with \r; keep only the newest state of the bar so
-                # the log does not grow to hundreds of megabytes on a long scan.
-                line = raw.rsplit("\r", 1)[-1]
-                fh.write(line if line.endswith("\n") else line + "\n")
-                new_stage = _stage_for(line)
-                if new_stage and new_stage != stage:
-                    stage = new_stage
-                    progress = 0.0
-                    update_job(job_id, stage=stage, progress=0)
-                m = _PERCENT_RE.search(line)
-                if m:
-                    pct = min(100.0, float(m.group(1)))
-                    if abs(pct - progress) >= 1.0:
-                        progress = pct
-                        now = time.time()
-                        if now - last_flush > 2.0:
-                            last_flush = now
-                            update_job(job_id, progress=progress)
-                fh.flush()
+            fd = proc.stdout.fileno()
+            buffer = b""
+            while True:
+                try:
+                    chunk = os.read(fd, 8192)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buffer += chunk
+                # Split on \r as well as \n: ffmpeg and tqdm redraw in place with
+                # carriage returns and can go hours without ever writing a
+                # newline, which would freeze the log and the progress bar.
+                parts = re.split(rb"[\r\n]", buffer)
+                buffer = parts.pop()
+                for part in parts:
+                    text = part.decode("utf-8", errors="replace").rstrip()
+                    if text:
+                        handle(text)
+            if buffer.strip():
+                handle(buffer.decode("utf-8", errors="replace").rstrip())
         finally:
             code = proc.wait()
             with _procs_lock:

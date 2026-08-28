@@ -91,6 +91,16 @@ function renderSummary(summary) {
   container.appendChild(statTile(formatClock(summary.seconds_cut), "removed"));
   container.appendChild(statTile(summary.mutes, "mutes"));
   container.appendChild(statTile(formatClock(summary.seconds_muted), "muted"));
+
+  // Rendering only re-encodes when something is actually cut. A mute-only edit
+  // stream-copies the video and finishes in minutes; a single accepted cut
+  // forces a full re-encode of the whole film, which is hours on this hardware.
+  const note = document.getElementById("render-note");
+  if (note) {
+    note.textContent = summary.cuts > 0
+      ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut and keeping only mutes copies the video instead and finishes in minutes.`
+      : "No cuts accepted, only mutes, so the render copies the video rather than re-encoding it. This will be quick.";
+  }
 }
 
 function decisionCard(decision) {
