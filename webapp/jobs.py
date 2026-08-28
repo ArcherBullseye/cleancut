@@ -60,8 +60,10 @@ _PERCENT_RE = re.compile(r"(\d{1,3})%")
 # ffmpeg reports position, never a percentage -- against the probed duration
 # that becomes one. Without it the bar sits at zero for the whole encode.
 _FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d\d):(\d\d)(?:\.(\d+))?")
-# Transient ffmpeg status lines: worth a progress update, not a log entry each.
-_FFMPEG_STATUS_RE = re.compile(r"^(frame|size)=\s*\S")
+# Transient redraw lines -- ffmpeg's status and tqdm's bars (Whisper's model
+# download alone emits thousands). Worth a progress update, not a log entry each:
+# a 60-second clip wrote a 209 KB log before this covered tqdm too.
+_FFMPEG_STATUS_RE = re.compile(r"^(frame|size)=\s*\S|^\s*\d{1,3}%\|")
 
 _procs: dict[int, subprocess.Popen] = {}
 _procs_lock = threading.Lock()

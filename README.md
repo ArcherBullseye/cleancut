@@ -51,8 +51,23 @@ to get.
 Optional. The LLM and vision signals used by the Thorough preset need the Ollama
 app; without it they are skipped and the rest of the pipeline runs normally.
 Umbrel puts every app on one bridge network, so the default host is
-`http://ollama_ollama_1:11434`. Pull `llama3.1:8b` and `llava:7b` to use them.
-Settings → Test connection reports what Ollama actually has.
+`http://ollama_ollama_1:11434`. Settings → Test connection reports what Ollama
+actually has.
+
+Defaults are `llama3.2:3b` and `moondream`, chosen by measuring on an Umbrel
+Home (4 cores, no GPU) rather than by taking upstream's:
+
+| Model | Measured | Verdict |
+|---|---|---|
+| `llama3.2:3b` | 18.9 tok/s prompt | dialogue default |
+| `llama3.1:8b` (upstream default) | 7.8 tok/s prompt | 2.4x slower, older |
+| `gemma4:e4b` | 0.3 tok/s generation | newer and does vision, but unusable here |
+| `moondream` (1B) | ~29 s per frame | vision default; the only one fast enough to try |
+| `llava:7b` (upstream default) | not tested | superseded; larger CPU VLMs are impractical |
+
+Pull whichever you use (`ollama pull llama3.2:3b`). Note what 29 s per shot
+means: the Thorough preset's vision pass adds hours to a feature, which is why
+Balanced — no LLM, no vision — is the default preset.
 
 ## If the library looks empty
 

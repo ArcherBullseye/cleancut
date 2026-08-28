@@ -32,10 +32,17 @@
     <div class="field">
       <label for="llm-model">Dialogue model</label>
       <input type="text" id="llm-model">
+      <p class="muted small">Measured here: <code>llama3.2:3b</code> runs about
+        2.4x faster than <code>llama3.1:8b</code> for this job. Larger models are
+        not worth it on a CPU.</p>
     </div>
     <div class="field">
       <label for="vlm-model">Vision model</label>
       <input type="text" id="vlm-model">
+      <p class="muted small">Roughly 29 seconds per shot with <code>moondream</code>
+        on four CPU cores, so the Thorough preset's vision pass adds hours. Bigger
+        vision models are far slower still -- one 8B model measured 0.3 tokens per
+        second here.</p>
     </div>
   </div>
 

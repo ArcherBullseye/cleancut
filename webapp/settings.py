@@ -24,8 +24,13 @@ DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama_ollama_1:1143
 DEFAULTS: dict[str, Any] = {
     "preset": "balanced",
     "ollama_host": DEFAULT_OLLAMA_HOST,
-    "llm_model": "llama3.1:8b",
-    "vlm_model": "llava:7b",
+    # Measured on an Umbrel Home (4 CPU cores, no GPU), which is what these
+    # have to run on:
+    #   llama3.2:3b   18.9 tok/s prompt   -- upstream's llama3.1:8b managed 7.8
+    #   gemma4:e4b     0.3 tok/s          -- newer and has vision, but unusable here
+    #   moondream     ~29 s per frame     -- the only vision model fast enough to try
+    "llm_model": "llama3.2:3b",
+    "vlm_model": "moondream",
     # Per-category action. "keep" means detected but never edited.
     "actions": {
         "profanity": "mute",
