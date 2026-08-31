@@ -43,6 +43,32 @@ def _video_encoder_args(encoder: str, quality: int) -> list[str]:
     return ["-c:v", "libx264", "-preset", "slow", "-crf", str(quality)]
 
 
+# ffmpeg's native AAC encoder refuses to open when the channel layout is
+# unspecified — it reports the input as "6 channels" rather than "5.1". A DDP
+# 5.1 source whose container carries no layout tag decodes to exactly that, so
+# every 5.1 file (the norm for WEB-DL) died at the final mux. Pinning the
+# filter chain to layouts the encoder knows is what fixes it.
+KNOWN_LAYOUTS = "aformat=channel_layouts=mono|stereo|5.1|7.1"
+
+# 192k spread across six channels is ~32k each, which is poor for surround.
+_AAC_BITRATE = {1: "128k", 2: "192k", 6: "448k", 8: "640k"}
+
+
+def _audio_encoder_args(input_path: Path) -> list[str]:
+    """AAC encoder flags with the bitrate matched to the source channel count."""
+    channels = 2
+    try:
+        from cleancut.probe import audio_streams, probe_streams
+
+        tracks = audio_streams(probe_streams(input_path))
+        if tracks and tracks[0].channels:
+            channels = int(tracks[0].channels)
+    except Exception:
+        # Probing is a nicety; a stereo-rate fallback still produces valid audio.
+        pass
+    return ["-c:a", "aac", "-b:a", _AAC_BITRATE.get(channels, "192k")]
+
+
 def apply_cuts(
     input_path: Path,
     cuts: list[Range],
@@ -77,15 +103,15 @@ def apply_cuts(
         concat_inputs.append(f"[v{i}][a{i}]")
     filter_complex = ";".join(parts) + ";" + "".join(concat_inputs) + (
         f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
-    )
+    ) + f";[outa]{KNOWN_LAYOUTS}[outa_fmt]"
 
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
         "-filter_complex", filter_complex,
-        "-map", "[outv]", "-map", "[outa]",
+        "-map", "[outv]", "-map", "[outa_fmt]",
         *_video_encoder_args(encoder, quality),
-        "-c:a", "aac", "-b:a", "192k",
+        *_audio_encoder_args(input_path),
         str(output_path),
     ]
     subprocess.run(cmd, check=True)
@@ -133,10 +159,15 @@ def apply_mutes_and_subs(
     if has_soft_subs:
         cmd += ["-i", str(srt_path)]
 
-    # Audio filter: mute volumes in the given ranges.
+    # Audio filter: mute volumes in the given ranges. The layout pin goes last
+    # in the chain and is always present — the encoder needs it whether or not
+    # there is anything to mute.
+    af_parts: list[str] = []
     if mutes:
         enable = "+".join(f"between(t,{r.start:.3f},{r.end:.3f})" for r in mutes)
-        cmd += ["-af", f"volume=enable='{enable}':volume=0"]
+        af_parts.append(f"volume=enable='{enable}':volume=0")
+    af_parts.append(KNOWN_LAYOUTS)
+    cmd += ["-af", ",".join(af_parts)]
 
     safe_dir: Path | None = None
     if can_burn:
@@ -159,7 +190,7 @@ def apply_mutes_and_subs(
         else:
             cmd += ["-c:v", "copy"]
 
-        cmd += ["-c:a", "aac", "-b:a", "192k", str(output_path)]
+        cmd += [*_audio_encoder_args(input_path), str(output_path)]
         cwd = str(safe_dir) if can_burn else None
         subprocess.run(cmd, check=True, cwd=cwd)
     finally:

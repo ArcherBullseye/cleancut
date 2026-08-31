@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cleancut.edl import EditDecision, EditDecisionList
-from cleancut.editor import apply_mutes_and_subs
+from cleancut.editor import KNOWN_LAYOUTS, Range, apply_mutes_and_subs
 
 
 def _capture_run():
@@ -198,3 +198,47 @@ class TestRunFullReturnsEdl:
         out_path, edl = result
         assert out_path == opts.edl_out
         assert edl is fake_edl
+
+
+class TestSurroundAudioLayout:
+    """A DDP 5.1 source whose container carries no channel-layout tag decodes to
+    an unspecified "6 channels" layout, and ffmpeg's native AAC encoder then
+    refuses to open ("Unsupported channel layout"). Every 5.1 render died at the
+    final mux until the filter chain pinned a layout the encoder knows."""
+
+    def _cmd(self, tmp_path, mutes, channels):
+        (tmp_path / "in.mp4").write_bytes(b"\x00")
+        calls, fake_run = _capture_run()
+
+        class _Track:
+            def __init__(self, ch):
+                self.channels = ch
+
+        with patch("cleancut.editor.subprocess.run", side_effect=fake_run), \
+             patch("cleancut.editor._ffmpeg_has_libass", return_value=False), \
+             patch("cleancut.editor._require_ffmpeg"), \
+             patch("cleancut.probe.probe_streams", return_value=[]), \
+             patch("cleancut.probe.audio_streams", return_value=[_Track(channels)]):
+            apply_mutes_and_subs(
+                input_path=tmp_path / "in.mp4",
+                mutes=mutes,
+                srt_path=None,
+                output_path=tmp_path / "out.mp4",
+            )
+        return calls[0][0]
+
+    def test_layout_is_pinned_even_with_nothing_to_mute(self, tmp_path):
+        cmd = self._cmd(tmp_path, [], 6)
+        assert cmd[cmd.index("-af") + 1] == KNOWN_LAYOUTS
+
+    def test_mute_filter_runs_before_the_layout_pin(self, tmp_path):
+        cmd = self._cmd(tmp_path, [Range(1.0, 2.0)], 6)
+        af = cmd[cmd.index("-af") + 1]
+        assert af.startswith("volume=enable=")
+        assert af.endswith(KNOWN_LAYOUTS)
+
+    def test_bitrate_scales_with_channel_count(self, tmp_path):
+        surround = self._cmd(tmp_path, [], 6)
+        assert surround[surround.index("-b:a") + 1] == "448k"
+        stereo = self._cmd(tmp_path, [], 2)
+        assert stereo[stereo.index("-b:a") + 1] == "192k"
