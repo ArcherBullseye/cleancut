@@ -483,7 +483,10 @@ def _finish_ok(job_id: int, job: dict[str, Any]) -> None:
             fields.update(status=FAILED, stage="Failed", error="Scan produced no EDL.")
     else:
         out = Path(job["output_path"])
-        if not out.exists():
+        # ffmpeg creates the output file before it writes to it, so a render
+        # that dies mid-encode leaves a zero-byte file behind. Existence alone
+        # is not proof of success.
+        if not out.exists() or out.stat().st_size == 0:
             fields.update(status=FAILED, stage="Failed",
                           error="Render finished but produced no output file.")
     update_job(job_id, **fields)
