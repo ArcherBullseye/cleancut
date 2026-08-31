@@ -140,7 +140,7 @@ def scan_subtitles(subs: list[Subtitle], config: Config) -> EditDecisionList:
         if action == "keep":
             continue
 
-        text_after = soften_text(sub.text, config.replacements)
+        text_after = soften_text(sub.text, config.replacements, config.wordlists)
         reason_prefix = "weak: " if line_strength == "weak" else "matched: "
         edl.add(
             EditDecision(
@@ -158,24 +158,66 @@ def scan_subtitles(subs: list[Subtitle], config: Config) -> EditDecisionList:
     return _filter_weak_without_context(edl)
 
 
-def soften_text(text: str, replacements: dict[str, str]) -> str:
+def _inflection_patterns(wordlists: dict | None) -> list[str]:
+    """Detector patterns that match inflected forms, stripped of their anchors.
+
+    Only patterns spelling an open suffix (\\w*) are taken. Those are exactly the
+    ones that match words the replacements map has no key for -- "porno",
+    "fuckers", "raped". Fixed patterns need no help: whatever they match is
+    already a literal the map can carry.
+    """
+    out: list[str] = []
+    for entries in (wordlists or {}).values():
+        for entry in entries or []:
+            pat = entry.get("pattern") if isinstance(entry, dict) else entry
+            if not pat or r"\w*" not in str(pat):
+                continue
+            pat = str(pat)
+            if pat.startswith(r"\b"):
+                pat = pat[2:]
+            if pat.endswith(r"\b"):
+                pat = pat[:-2]
+            out.append(pat)
+    return out
+
+
+def soften_text(
+    text: str,
+    replacements: dict[str, str],
+    wordlists: dict | None = None,
+) -> str:
     """Case-preserving word-boundary substitution, in a single pass.
 
     A single combined regex guarantees replacements never re-substitute each
     other's output (shit→crap plus crap→crud must yield "crap", not "crud").
+
+    With `wordlists`, the detector's own inflection patterns join the
+    alternation, so the softener covers the same words the detector flags. The
+    map holds base forms only, so an inflected match falls back to the longest
+    key that prefixes it ("porno" → porn, "fuckers" → fucker). A match with no
+    such key is returned untouched -- better readable than mangled.
     """
     if not replacements:
         return text
     # Longer phrases first so multi-word entries win the alternation.
     keys = sorted(replacements.keys(), key=len, reverse=True)
+    alternatives = [re.escape(k) for k in keys]
+    alternatives += _inflection_patterns(wordlists)
     pattern = re.compile(
-        r"\b(?:" + "|".join(re.escape(k) for k in keys) + r")\b", re.IGNORECASE
+        r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE
     )
     lower_map = {k.lower(): v for k, v in replacements.items()}
+    lower_keys = sorted(lower_map, key=len, reverse=True)
 
     def _sub(m: re.Match) -> str:
         original = m.group(0)
-        return _match_case(original, lower_map[original.lower()])
+        low = original.lower()
+        if low in lower_map:
+            return _match_case(original, lower_map[low])
+        for key in lower_keys:
+            if low.startswith(key):
+                return _match_case(original, lower_map[key])
+        return original
 
     return pattern.sub(_sub, text)
 
@@ -191,7 +233,7 @@ def _match_case(original: str, replacement: str) -> str:
 def softened_subtitles(subs: list[Subtitle], config: Config) -> list[Subtitle]:
     """Return a copy of subs with every line softened by the replacements map."""
     return [
-        Subtitle(index=s.index, start=s.start, end=s.end, text=soften_text(s.text, config.replacements))
+        Subtitle(index=s.index, start=s.start, end=s.end, text=soften_text(s.text, config.replacements, config.wordlists))
         for s in subs
     ]
 
@@ -247,7 +289,7 @@ def scan_words(words, config: Config) -> EditDecisionList:
                     category=category,
                     reason=reason_prefix + matched.lower(),
                     text_before=text,
-                    text_after=soften_text(text, config.replacements),
+                    text_after=soften_text(text, config.replacements, config.wordlists),
                     source="whisper-word",
                 )
             )

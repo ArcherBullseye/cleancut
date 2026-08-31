@@ -2,7 +2,7 @@
 
 This fork vendors [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 so upstream fixes can be pulled in cleanly. The detection pipeline is unmodified.
-Three changes have been made, all recorded here.
+Four changes have been made, all recorded here.
 
 To pull upstream changes: replace `cleancut/` with the new upstream copy, then
 re-apply each of these.
@@ -47,4 +47,22 @@ zero-byte output file.
 Now `sys.exit(main())`. Upstream's own `cli.py` already does this under its
 `if __name__ == "__main__"` guard, which never fires under `-m`.
 
-Upstream's test suite passes unmodified against all three.
+## 4. Subtitle softener covers the detector's inflections (subtitles.py) — bug fix
+
+The wordlists spell open suffixes (`\w*`), so the detector matches "porno",
+"fuckers", "raped". `replacements.json` holds base forms only and `soften_text`
+matched them as exact `\b`-anchored literals, so those words were muted or cut
+in the audio while the softened subtitle track still displayed them in full — a
+kid reading subtitles saw what the audio had removed.
+
+`soften_text` now takes an optional `wordlists` argument and folds the
+detector's `\w*` patterns into the same single-pass alternation, resolving each
+match to the longest base-form key that prefixes it. A match with no such key is
+returned untouched rather than mangled.
+
+Only patterns spelling `\w*` are borrowed. That matters: `ass` is a replacement
+key, and widening every key by a suffix would rewrite "assistant" and "assume".
+The detector has no bare-`ass` pattern, so keying off its patterns is safe —
+covered by tests.
+
+Upstream's test suite passes unmodified against all four.
