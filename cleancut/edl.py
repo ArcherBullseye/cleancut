@@ -26,6 +26,33 @@ class EditDecision:
         return max(0.0, self.end - self.start)
 
 
+# Detectors label a hit with a composite category ("violence+profanity"), while
+# the user configures an action per base category. The strongest action any
+# component asks for wins, so a scene that is both keep-violence and cut-sex is
+# still cut, and one that is only keep-violence is dropped.
+_ACTION_STRENGTH = {"keep": 0, "mute": 1, "cut": 2}
+
+
+def resolve_action(
+    category: str,
+    actions: dict[str, str] | None,
+    default: str = "cut",
+) -> str:
+    """Resolve a detector's category against the configured per-category actions.
+
+    Returns `default` when `actions` is empty or nothing in `category` maps to a
+    configured entry -- the LLM's catch-all "multi" has no setting of its own.
+    Callers MUST drop the decision when this returns "keep": every detector used
+    to hardcode action="cut", which silently overrode the user's settings.
+    """
+    if not actions:
+        return default
+    resolved = [actions[part] for part in category.split("+") if part in actions]
+    if not resolved:
+        return default
+    return max(resolved, key=lambda a: _ACTION_STRENGTH.get(a, 0))
+
+
 @dataclass
 class EditDecisionList:
     decisions: list[EditDecision] = field(default_factory=list)

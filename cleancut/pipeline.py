@@ -267,6 +267,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             model=config.llm_model,
             ollama_host=config.llm_host,
             min_confidence=config.llm_min_confidence,
+            actions=config.actions,
         )
         llm_edl_decisions = _run_detector(
             "LLM scan", lambda: classify_dialogue(subs, llm_params, video=opts.video).decisions
@@ -284,6 +285,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             threshold=config.audio_events_threshold,
             clip_seconds=config.audio_events_clip_seconds,
             skip_violence=config.audio_events_skip_violence,
+            actions=config.actions,
         )
         # Analyze the same track Whisper transcribes — ffmpeg's default stream
         # can be a commentary or foreign dub.
@@ -319,6 +321,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
                 window_seconds=config.density_window_seconds,
                 min_events=config.density_min_events,
                 min_cluster_span=config.density_min_cluster_span,
+                actions=config.actions,
             ),
         )
         if len(clusters):
@@ -342,6 +345,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             gaps_radius_seconds=config.vlm_gaps_radius,
             cut_on=cut_on,
             ollama_host=config.llm_host,
+            actions=config.actions,
         )
         vlm_edl_decisions = _run_detector(
             "VLM scan",

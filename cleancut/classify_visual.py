@@ -27,7 +27,7 @@ from cleancut.constants import (
     MAX_CONSECUTIVE_LLM_FAILURES,
     MAX_REASON_LENGTH,
 )
-from cleancut.edl import EditDecision, EditDecisionList
+from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 from cleancut.llm_utils import (
     coerce_confidence,
     make_ollama_client,
@@ -72,6 +72,10 @@ class VLMParams:
     gaps_radius_seconds: float = DEFAULT_VLM_GAPS_RADIUS
     # Skip shots shorter than this — they're usually transitions.
     min_shot_duration: float = DEFAULT_VLM_MIN_SHOT_DURATION
+    # Per-category actions from the user's config. None means "cut",
+    # preserving the old behaviour for direct callers.
+    actions: dict[str, str] | None = None
+
     # Confidence threshold.
     min_confidence: float = DEFAULT_VLM_CONFIDENCE
     # Categories to consider a cut. "intimate" is borderline; off by default,
@@ -260,12 +264,15 @@ def scan_with_vlm(
             if not cats:
                 continue
             category = "+".join(cats)
+            action = resolve_action(category, params.actions)
+            if action == "keep":
+                continue
             desc = (result or {}).get("description", "")[:MAX_REASON_LENGTH]
             edl.add(
                 EditDecision(
                     start=shot.start,
                     end=shot.end,
-                    action="cut",
+                    action=action,
                     category=category,
                     reason=f"VLM ({params.model}) {','.join(cats)}: {desc}",
                     source="vlm",

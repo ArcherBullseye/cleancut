@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from cleancut.edl import EditDecision, EditDecisionList
+from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 from cleancut.scenes import Shot
 
 
@@ -57,6 +57,10 @@ class AudioEventParams:
     clip_seconds: float = 8.0
     # Categories to emit cuts for — wired through DEFAULT_CATEGORY_LABELS by key.
     enabled_categories: tuple[str, ...] = ("sex", "violence")
+    # Per-category actions from the user's config. None means "cut",
+    # preserving the old behaviour for direct callers.
+    actions: dict[str, str] | None = None
+
     # Drop the violence category by default (per Dan's preference); flip off via config.
     skip_violence: bool = True
     # Use cache.
@@ -228,13 +232,17 @@ def scan_audio_events(
                     continue
                 hits.sort(key=lambda x: -x[1])
                 cats = sorted({label_to_category[lbl] for lbl, _ in hits})
+                category = "+".join(cats)
+                action = resolve_action(category, params.actions)
+                if action == "keep":
+                    continue
                 top = hits[0]
                 edl.add(
                     EditDecision(
                         start=shot.start,
                         end=shot.end,
-                        action="cut",
-                        category="+".join(cats),
+                        action=action,
+                        category=category,
                         reason=f"audio event: {top[0]} ({top[1]:.2f})",
                         source="audio",
                     )

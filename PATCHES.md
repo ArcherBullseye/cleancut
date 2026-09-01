@@ -2,7 +2,7 @@
 
 This fork vendors [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 so upstream fixes can be pulled in cleanly. The detection pipeline is unmodified.
-Four changes have been made, all recorded here.
+Five changes have been made, all recorded here.
 
 To pull upstream changes: replace `cleancut/` with the new upstream copy, then
 re-apply each of these.
@@ -65,4 +65,28 @@ key, and widening every key by a suffix would rewrite "assistant" and "assume".
 The detector has no bare-`ass` pattern, so keying off its patterns is safe —
 covered by tests.
 
-Upstream's test suite passes unmodified against all four.
+## 5. Detectors respect the configured actions (four files) — bug fix
+
+`subtitles.py` and `visual.py` resolved each hit through
+`config.actions.get(category, ...)`, but the other four detectors hardcoded
+`action="cut"`:
+
+    classify_dialogue.py:223   audio_events.py:236
+    classify_visual.py:268     density.py:91
+
+So a scan run with `violence=keep` still cut every violent scene the LLM found,
+and categories set to `mute` were cut instead. That is not just a correctness
+problem: a cut forces a full video re-encode, while a mute-only edit
+stream-copies, so the bug also turned minute-long renders into multi-hour ones.
+
+`resolve_action()` in `edl.py` now maps a (possibly composite) category to the
+configured action. Composite categories like `violence+profanity` take the
+strongest action any component asks for, and are dropped only when every
+component says keep. Each detector's params dataclass gained an `actions` field,
+defaulting to `None`, which preserves the old cut-everything behaviour for
+direct callers; `pipeline.py` passes `config.actions` at all four sites.
+
+Note `density.py` uses a guard rather than `continue` -- the loop's `i = k + 1`
+must still run.
+
+Upstream's test suite passes unmodified against all five.

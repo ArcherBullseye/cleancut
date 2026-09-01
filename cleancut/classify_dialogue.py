@@ -22,7 +22,7 @@ from cleancut.constants import (
     MAX_CONSECUTIVE_LLM_FAILURES,
     MAX_REASON_LENGTH,
 )
-from cleancut.edl import EditDecision, EditDecisionList
+from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 from cleancut.llm_utils import (
     coerce_confidence,
     make_ollama_client,
@@ -88,6 +88,10 @@ class LLMParams:
     min_confidence: float = DEFAULT_LLM_CONFIDENCE  # below this, ignore the classification
     pad_seconds: float = 1.0
     ollama_host: str | None = None       # None = default 127.0.0.1:11434
+    # Per-category actions from the user's config. None means "cut",
+    # preserving the old behaviour for direct callers.
+    actions: dict[str, str] | None = None
+
 
 
 @dataclass
@@ -216,11 +220,14 @@ def classify_dialogue(
             continue
         if category not in {"drugs", "sex", "violence", "multi"}:
             continue
+        action = resolve_action(category, params.actions)
+        if action == "keep":
+            continue
         edl.add(
             EditDecision(
                 start=max(0.0, chunk.start - params.pad_seconds),
                 end=chunk.end + params.pad_seconds,
-                action="cut",
+                action=action,
                 category=category,
                 reason=f"LLM ({params.model}): {result.get('reasoning', '')[:MAX_REASON_LENGTH]}",
                 source="llm-dialogue",

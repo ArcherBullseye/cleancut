@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cleancut.edl import EditDecision, EditDecisionList
+from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 
 
 # Density is a *dialogue density* signal. Visual hits (NudeNet, VLM) are excluded
@@ -32,6 +32,10 @@ class DensityParams:
     pad_seconds: float = 1.0       # extend cluster by this on each side
     # If the cluster spans more than this, treat it as a "scene" worth cutting.
     min_cluster_span: float = 8.0
+    # Per-category actions from the user's config. None means "cut",
+    # preserving the old behaviour for direct callers.
+    actions: dict[str, str] | None = None
+
 
 
 def _is_dialogue_event(d) -> bool:
@@ -84,16 +88,20 @@ def find_clusters(edl: EditDecisionList, params: DensityParams) -> EditDecisionL
             span = cluster_end - cluster_start
             if span >= params.min_cluster_span:
                 cats = sorted({e.category.split("+")[0] for e in events[i:k + 1]})
-                out.append(
-                    EditDecision(
-                        start=max(0.0, cluster_start - params.pad_seconds),
-                        end=cluster_end + params.pad_seconds,
-                        action="cut",
-                        category="+".join(cats),
-                        reason=f"density: {k - i + 1} events in {span:.1f}s window",
-                        source="density",
+                category = "+".join(cats)
+                # A guard, not `continue`: the `i = k + 1` below must still run.
+                action = resolve_action(category, params.actions)
+                if action != "keep":
+                    out.append(
+                        EditDecision(
+                            start=max(0.0, cluster_start - params.pad_seconds),
+                            end=cluster_end + params.pad_seconds,
+                            action=action,
+                            category=category,
+                            reason=f"density: {k - i + 1} events in {span:.1f}s window",
+                            source="density",
+                        )
                     )
-                )
             i = k + 1
         else:
             i += 1
