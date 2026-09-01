@@ -216,3 +216,24 @@ class TestSidecarLanguagePreference:
 
         assert find_sidecar_subtitle(video, prefer_language="spa") == tmp_path / "Movie.spa.srt"
         assert find_sidecar_subtitle(video, prefer_language="eng") == tmp_path / "Movie.en.srt"
+
+
+def test_browser_preview_clip_uses_macos_compatible_h264(tmp_path):
+    from webapp import review
+
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"source")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        Path(cmd[-1]).write_bytes(b"preview")
+
+    with patch("webapp.review.job_dir", return_value=tmp_path), \
+         patch("webapp.review.subprocess.run", side_effect=fake_run):
+        output = review.clip(12, source, 10.0, 12.0)
+
+    assert output is not None
+    cmd = calls[0][0]
+    assert cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+    assert cmd[cmd.index("-movflags") + 1] == "+faststart"

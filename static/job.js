@@ -92,14 +92,14 @@ function renderSummary(summary) {
   container.appendChild(statTile(summary.mutes, "mutes"));
   container.appendChild(statTile(formatClock(summary.seconds_muted), "muted"));
 
-  // Rendering only re-encodes when something is actually cut. A mute-only edit
-  // stream-copies the video and finishes in minutes; a single accepted cut
-  // forces a full re-encode of the whole film, which is hours on this hardware.
+  // Cuts always require a full re-encode. A mute-only edit normally copies a
+  // compatible H.264/HEVC stream; uncommon formats are converted so the result
+  // remains playable in macOS and browsers.
   const note = document.getElementById("render-note");
   if (note) {
     note.textContent = summary.cuts > 0
-      ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut and keeping only mutes copies the video instead and finishes in minutes.`
-      : "No cuts accepted, only mutes, so the render copies the video rather than re-encoding it. This will be quick.";
+      ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut avoids that unless the source format needs conversion for playback.`
+      : "No cuts accepted, only mutes. Compatible H.264/HEVC video will be copied and finish quickly; other formats are converted for macOS/browser playback.";
   }
 }
 

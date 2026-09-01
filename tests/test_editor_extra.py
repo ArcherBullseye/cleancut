@@ -1,6 +1,6 @@
 """Tests for editor.py helpers not covered by editor_math tests."""
 
-from cleancut.editor import Range, _video_encoder_args
+from cleancut.editor import Range, _can_stream_copy_to_apple_mp4, _video_encoder_args
 
 
 def test_video_encoder_libx264_args():
@@ -9,6 +9,7 @@ def test_video_encoder_libx264_args():
     assert "-crf" in args
     assert "18" in args
     assert "-preset" in args
+    assert args[args.index("-pix_fmt") + 1] == "yuv420p"
 
 
 def test_video_encoder_videotoolbox_args():
@@ -19,6 +20,7 @@ def test_video_encoder_videotoolbox_args():
     q_idx = args.index("-q:v") + 1
     q = int(args[q_idx])
     assert 30 <= q <= 100
+    assert args[args.index("-pix_fmt") + 1] == "yuv420p"
 
 
 def test_video_encoder_higher_quality_higher_q_for_videotoolbox():
@@ -28,6 +30,13 @@ def test_video_encoder_higher_quality_higher_q_for_videotoolbox():
     q_high = int(args_high[args_high.index("-q:v") + 1])
     q_low = int(args_low[args_low.index("-q:v") + 1])
     assert q_high > q_low
+
+
+def test_apple_mp4_stream_copy_compatibility():
+    assert _can_stream_copy_to_apple_mp4("h264", "yuv420p")
+    assert _can_stream_copy_to_apple_mp4("hevc", "yuv420p10le")
+    assert not _can_stream_copy_to_apple_mp4("h264", "yuv444p")
+    assert not _can_stream_copy_to_apple_mp4("vp9", "yuv420p")
 
 
 def test_range_duration():

@@ -1,5 +1,8 @@
 """Tests for probe.py — sidecar discovery, language preference, track selection."""
 
+import json
+from unittest.mock import patch
+
 import pytest
 
 from cleancut.probe import (
@@ -8,6 +11,7 @@ from cleancut.probe import (
     find_sidecar_subtitle,
     pick_audio_track,
     pick_embedded_subtitle,
+    probe_streams,
     subtitle_streams,
 )
 
@@ -81,6 +85,24 @@ def test_pick_embedded_subtitle_language_preference():
     streams = [_sub(1, "fra", codec="srt"), _sub(2, "eng", codec="srt")]
     picked = pick_embedded_subtitle(streams, prefer_language="eng")
     assert picked.language == "eng"
+
+
+def test_probe_streams_keeps_video_pixel_format(tmp_path):
+    payload = {
+        "streams": [
+            {
+                "index": 0,
+                "codec_name": "h264",
+                "codec_type": "video",
+                "pix_fmt": "yuv444p",
+            }
+        ]
+    }
+    with patch("cleancut.probe.shutil.which", return_value="/usr/bin/ffprobe"), \
+         patch("cleancut.probe.subprocess.check_output", return_value=json.dumps(payload).encode()):
+        streams = probe_streams(tmp_path / "movie.mp4")
+
+    assert streams[0].pix_fmt == "yuv444p"
 
 
 def test_find_sidecar_bare_name(tmp_path):

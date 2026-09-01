@@ -95,6 +95,60 @@ class TestApplyMutesAndSubs:
         cmd, _ = calls[0]
         assert cmd[cmd.index("-c:s") + 1] == "mov_text"
 
+    def test_mp4_is_faststart_for_browser_playback(self, tmp_path):
+        calls, fake_run = _capture_run()
+        with patch("cleancut.editor.subprocess.run", side_effect=fake_run), \
+             patch("cleancut.editor._source_video_format", return_value=("h264", "yuv420p")), \
+             patch("cleancut.editor._require_ffmpeg"):
+            apply_mutes_and_subs(
+                input_path=tmp_path / "in.mp4",
+                mutes=[],
+                srt_path=None,
+                output_path=tmp_path / "out.mp4",
+                burn_subs=False,
+            )
+
+        cmd, _ = calls[0]
+        assert cmd[cmd.index("-movflags") + 1] == "+faststart"
+        assert cmd[cmd.index("-c:v") + 1] == "copy"
+
+    def test_copied_hevc_uses_apple_hvc1_tag(self, tmp_path):
+        calls, fake_run = _capture_run()
+        with patch("cleancut.editor.subprocess.run", side_effect=fake_run), \
+             patch(
+                 "cleancut.editor._source_video_format",
+                 return_value=("hevc", "yuv420p10le"),
+             ), \
+             patch("cleancut.editor._require_ffmpeg"):
+            apply_mutes_and_subs(
+                input_path=tmp_path / "in.mkv",
+                mutes=[],
+                srt_path=None,
+                output_path=tmp_path / "out.mp4",
+                burn_subs=False,
+            )
+
+        cmd, _ = calls[0]
+        assert cmd[cmd.index("-c:v") + 1] == "copy"
+        assert cmd[cmd.index("-tag:v") + 1] == "hvc1"
+
+    def test_incompatible_mp4_video_is_converted_to_h264(self, tmp_path):
+        calls, fake_run = _capture_run()
+        with patch("cleancut.editor.subprocess.run", side_effect=fake_run), \
+             patch("cleancut.editor._source_video_format", return_value=("vp9", "yuv420p")), \
+             patch("cleancut.editor._require_ffmpeg"):
+            apply_mutes_and_subs(
+                input_path=tmp_path / "in.webm",
+                mutes=[],
+                srt_path=None,
+                output_path=tmp_path / "out.mp4",
+                burn_subs=False,
+            )
+
+        cmd, _ = calls[0]
+        assert cmd[cmd.index("-c:v") + 1] == "libx264"
+        assert cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+
 
 class TestApplyCuts:
     def test_no_cuts_remuxes_with_stream_copy(self, tmp_path):
@@ -126,6 +180,7 @@ class TestApplyCuts:
         assert "trim=start=20.000:end=100.000" in fc
         assert "concat=n=2:v=1:a=1" in fc
         assert cmd[cmd.index("-c:v") + 1] == "libx264"
+        assert cmd[cmd.index("-movflags") + 1] == "+faststart"
 
     def test_all_content_cut_raises(self, tmp_path):
         import pytest

@@ -41,10 +41,10 @@ Timings are for a feature film on an Umbrel Home (4-core x86, no GPU).
 | Thorough | Everything, incl. Ollama LLM + vision | Most of a day |
 
 Those are **scan** times. Rendering is separate, and its cost depends entirely
-on what you accept at review: a mute-only edit stream-copies the video and
-finishes in minutes, while a single accepted cut forces a full re-encode of the
-whole film — hours on four cores. The review page says which one you are about
-to get.
+on what you accept at review: a mute-only edit normally stream-copies compatible
+H.264/HEVC video and finishes in minutes, while a single accepted cut forces a
+full re-encode of the whole film — hours on four cores. Uncommon source formats
+are also converted so the output remains playable in macOS and browsers.
 
 ## Ollama
 

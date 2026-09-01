@@ -2,7 +2,7 @@
 
 This fork vendors [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 so upstream fixes can be pulled in cleanly. The detection pipeline is unmodified.
-Five changes have been made, all recorded here.
+Six changes have been made, all recorded here.
 
 To pull upstream changes: replace `cleancut/` with the new upstream copy, then
 re-apply each of these.
@@ -89,4 +89,16 @@ direct callers; `pipeline.py` passes `config.actions` at all four sites.
 Note `density.py` uses a guard rather than `continue` -- the loop's `i = k + 1`
 must still run.
 
-Upstream's test suite passes unmodified against all five.
+## 6. macOS-compatible MP4 output (editor.py, probe.py, review.py) — bug fix
+
+H.264 encoders inherited the source pixel format, so a 10-bit or 4:4:4 input
+could produce a valid output that QuickTime and Safari could not decode. MP4
+metadata was also written at the end of the file, and copied HEVC used ffmpeg's
+`hev1` tag instead of Apple's expected `hvc1` tag.
+
+All H.264 encodes and browser review clips now emit 8-bit `yuv420p`. MP4 output
+uses `+faststart`, copied HEVC is tagged `hvc1`, and known-incompatible source
+video formats are converted to H.264. Compatible H.264 and HEVC sources retain
+the fast stream-copy path used by mute-only renders.
+
+Upstream's test suite passes with regression coverage for all six changes.

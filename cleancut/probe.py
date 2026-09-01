@@ -43,6 +43,9 @@ class Stream:
     language: str = "und"
     title: str = ""
     channels: int | None = None
+    # Video pixel format (for example yuv420p or yuv444p).  Kept optional so
+    # callers that construct audio/subtitle Stream objects need no special case.
+    pix_fmt: str = ""
 
 
 def probe_duration(path: Path) -> float:
@@ -81,6 +84,7 @@ def probe_streams(video: Path) -> list[Stream]:
                 language=str(s.get("tags", {}).get("language", "und")),
                 title=str(s.get("tags", {}).get("title", "")),
                 channels=s.get("channels"),
+                pix_fmt=str(s.get("pix_fmt", "")),
             )
         )
     return streams

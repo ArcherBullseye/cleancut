@@ -200,6 +200,7 @@ def clip(job_id: int, video: Path, start: float, end: float) -> Path | None:
         "ffmpeg", "-nostdin", "-y", "-ss", f"{start - lead:.2f}", "-t", f"{span:.2f}",
         "-i", str(video),
         "-vf", "scale=640:-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "96k", "-ac", "2",
         "-movflags", "+faststart", "-threads", "2", str(out),
     ]

@@ -33,14 +33,74 @@ def _require_ffmpeg() -> None:
 
 
 def _video_encoder_args(encoder: str, quality: int) -> list[str]:
-    """Return ffmpeg flags for the chosen video encoder."""
+    """Return ffmpeg flags for a broadly playable H.264 stream.
+
+    libx264 otherwise inherits the source pixel format.  A 10-bit or 4:4:4
+    source can therefore produce a valid H.264 file that QuickTime and Safari
+    refuse to decode.  yuv420p is the interoperable 8-bit format expected by
+    macOS, browsers, TVs, and media servers.
+    """
     if encoder == "videotoolbox":
         # videotoolbox uses -q:v (higher = better). Map CRF-ish quality to a sensible q.
         # CRF 18 ~ q 54, CRF 20 ~ q 50, CRF 23 ~ q 44.
         q = max(30, min(100, 90 - quality * 2))
-        return ["-c:v", "h264_videotoolbox", "-q:v", str(q), "-b:v", "0"]
+        return [
+            "-c:v", "h264_videotoolbox", "-q:v", str(q), "-b:v", "0",
+            "-pix_fmt", "yuv420p",
+        ]
     # libx264 default
-    return ["-c:v", "libx264", "-preset", "slow", "-crf", str(quality)]
+    return [
+        "-c:v", "libx264", "-preset", "slow", "-crf", str(quality),
+        "-pix_fmt", "yuv420p",
+    ]
+
+
+_MP4_SUFFIXES = {".mp4", ".m4v", ".mov"}
+_APPLE_H264_PIXEL_FORMATS = {"", "yuv420p", "yuvj420p"}
+_APPLE_HEVC_PIXEL_FORMATS = {"", "yuv420p", "yuv420p10le"}
+
+
+def _source_video_format(input_path: Path) -> tuple[str, str]:
+    """Return (codec, pixel format) for the first video stream, best effort."""
+    try:
+        from cleancut.probe import probe_streams
+
+        video = next(s for s in probe_streams(input_path) if s.codec_type == "video")
+        return video.codec_name.lower(), video.pix_fmt.lower()
+    except (
+        AttributeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        StopIteration,
+        subprocess.SubprocessError,
+        ValueError,
+    ):
+        # A failed probe should not turn a quick mute-only job into an
+        # unexpected multi-hour encode. ffmpeg remains the final validator.
+        return "", ""
+
+
+def _can_stream_copy_to_apple_mp4(codec: str, pix_fmt: str) -> bool:
+    """Whether a stream can stay copied while remaining QuickTime/Safari-safe."""
+    if not codec:
+        return True
+    if codec == "h264":
+        return pix_fmt in _APPLE_H264_PIXEL_FORMATS
+    if codec in {"hevc", "h265"}:
+        return pix_fmt in _APPLE_HEVC_PIXEL_FORMATS
+    return False
+
+
+def _muxer_args(output_path: Path, *, copied_video_codec: str = "") -> list[str]:
+    """Container flags for seekable MP4 playback, including Apple's HEVC tag."""
+    if output_path.suffix.lower() not in _MP4_SUFFIXES:
+        return []
+    args = ["-movflags", "+faststart"]
+    if copied_video_codec in {"hevc", "h265"}:
+        # ffmpeg defaults to hev1; Apple software expects hvc1 for HEVC in MP4.
+        args += ["-tag:v", "hvc1"]
+    return args
 
 
 # ffmpeg's native AAC encoder refuses to open when the channel layout is
@@ -80,8 +140,13 @@ def apply_cuts(
     _require_ffmpeg()
     if not cuts:
         # Nothing to cut — just remux.
+        codec, _ = _source_video_format(input_path)
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(input_path), "-c", "copy", str(output_path)],
+            [
+                "ffmpeg", "-y", "-i", str(input_path), "-c", "copy",
+                *_muxer_args(output_path, copied_video_codec=codec),
+                str(output_path),
+            ],
             check=True,
         )
         return
@@ -112,6 +177,7 @@ def apply_cuts(
         "-map", "[outv]", "-map", "[outa_fmt]",
         *_video_encoder_args(encoder, quality),
         *_audio_encoder_args(input_path),
+        *_muxer_args(output_path),
         str(output_path),
     ]
     subprocess.run(cmd, check=True)
@@ -151,6 +217,14 @@ def apply_mutes_and_subs(
     output_path = output_path.resolve()
 
     can_burn = burn_subs and srt_path and srt_path.exists() and _ffmpeg_has_libass()
+    source_codec, source_pix_fmt = _source_video_format(input_path)
+    copy_video = (
+        not can_burn
+        and (
+            output_path.suffix.lower() not in _MP4_SUFFIXES
+            or _can_stream_copy_to_apple_mp4(source_codec, source_pix_fmt)
+        )
+    )
 
     cmd: list[str] = ["ffmpeg", "-y", "-i", str(input_path)]
 
@@ -183,14 +257,19 @@ def apply_mutes_and_subs(
             # MP4-family only; Matroska (and most others) take srt.
             sub_codec = "mov_text" if output_path.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
             cmd += ["-map", "0:v", "-map", "0:a", "-map", "1:0"]
-            cmd += ["-c:v", "copy"]
+            cmd += ["-c:v", "copy"] if copy_video else _video_encoder_args(encoder, quality)
             cmd += ["-c:s", sub_codec]
             cmd += ["-metadata:s:s:0", "language=eng",
                     "-metadata:s:s:0", "title=cleancut (softened)"]
         else:
-            cmd += ["-c:v", "copy"]
+            cmd += ["-c:v", "copy"] if copy_video else _video_encoder_args(encoder, quality)
 
-        cmd += [*_audio_encoder_args(input_path), str(output_path)]
+        copied_codec = source_codec if copy_video else ""
+        cmd += [
+            *_audio_encoder_args(input_path),
+            *_muxer_args(output_path, copied_video_codec=copied_codec),
+            str(output_path),
+        ]
         cwd = str(safe_dir) if can_burn else None
         subprocess.run(cmd, check=True, cwd=cwd)
     finally:
