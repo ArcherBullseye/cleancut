@@ -35,9 +35,11 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("visual_sample_seconds", "visual_sample_seconds"),
     ("visual_min_streak", "visual_min_streak"),
     ("visual_shot_hit_fraction", "visual_shot_hit_fraction"),
+    ("analysis_height", "analysis_max_height"),
     ("scene_threshold", "scene_threshold"),
     ("encoder", "encoder"),
     ("quality", "quality"),
+    ("verify_render", "render_validation"),
     ("density", "density_enabled"),
     ("density_window", "density_window_seconds"),
     ("density_min_events", "density_min_events"),
@@ -98,6 +100,8 @@ def _apply_common(args: argparse.Namespace, config: "Config") -> None:
         config.vlm_cut_intimate = True
     if args.allow_solo_visual:
         config.require_visual_corroboration = False
+    if getattr(args, "no_analysis_proxy", False):
+        config.analysis_proxy_enabled = False
     # Track / language selection is on the PipelineOptions, not Config.
 
 
@@ -141,6 +145,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Streak mode: consecutive flagged samples needed to emit a cut.")
     p.add_argument("--visual-shot-hit-fraction", type=float, default=None,
                    help="Shot-aware mode: fraction of sampled frames in a shot that must hit (0-1).")
+    p.add_argument("--analysis-height", type=int, default=None,
+                   help="Maximum proxy height for scene/visual analysis (default: 720).")
+    p.add_argument("--no-analysis-proxy", action="store_true",
+                   help="Analyze frames at source resolution instead of using a cached proxy.")
     p.add_argument("--scene-threshold", type=float, default=None,
                    help="PySceneDetect ContentDetector threshold. Lower = more cuts.")
     p.add_argument("--no-snap-to-scenes", action="store_true",
@@ -195,10 +203,16 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Don't require corroboration for visual-only cuts (NudeNet, VLM).")
     p.add_argument("--corroboration-radius", type=float, default=None,
                    help="Visual cuts need a dialogue/audio event within ±N seconds (default 5).")
-    p.add_argument("--encoder", default=None, choices=["auto", "videotoolbox", "libx264"],
+    p.add_argument(
+        "--encoder", default=None,
+        choices=["auto", "videotoolbox", "hevc_videotoolbox", "libx264", "libx265"],
                    help="Video encoder. auto = videotoolbox on macOS, libx264 elsewhere.")
     p.add_argument("--quality", type=int, default=None,
                    help="Quality (libx264 CRF; lower=better). Default depends on preset.")
+    p.add_argument(
+        "--verify-render", choices=["none", "quick", "full"], default=None,
+        help="Post-render validation: metadata only or a full frame decode.",
+    )
     p.add_argument("--audio-track", type=int, default=None,
                    help="0-indexed audio track to transcribe (audio:0, audio:1, …). Default: prefer English.")
     p.add_argument("--prefer-language", default="eng",

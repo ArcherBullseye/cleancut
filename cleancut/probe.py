@@ -46,6 +46,21 @@ class Stream:
     # Video pixel format (for example yuv420p or yuv444p).  Kept optional so
     # callers that construct audio/subtitle Stream objects need no special case.
     pix_fmt: str = ""
+    profile: str = ""
+    level: int | None = None
+    codec_tag_string: str = ""
+    width: int | None = None
+    height: int | None = None
+    avg_frame_rate: str = ""
+    color_range: str = ""
+    color_space: str = ""
+    color_transfer: str = ""
+    color_primaries: str = ""
+
+    @property
+    def is_hdr(self) -> bool:
+        """Whether the stream advertises HDR10/PQ or HLG transfer metadata."""
+        return self.color_transfer.lower() in {"smpte2084", "arib-std-b67"}
 
 
 def probe_duration(path: Path) -> float:
@@ -85,9 +100,31 @@ def probe_streams(video: Path) -> list[Stream]:
                 title=str(s.get("tags", {}).get("title", "")),
                 channels=s.get("channels"),
                 pix_fmt=str(s.get("pix_fmt", "")),
+                profile=str(s.get("profile", "")),
+                level=_optional_int(s.get("level")),
+                codec_tag_string=str(s.get("codec_tag_string", "")),
+                width=_optional_int(s.get("width")),
+                height=_optional_int(s.get("height")),
+                avg_frame_rate=str(s.get("avg_frame_rate", "")),
+                color_range=str(s.get("color_range", "")),
+                color_space=str(s.get("color_space", "")),
+                color_transfer=str(s.get("color_transfer", "")),
+                color_primaries=str(s.get("color_primaries", "")),
             )
         )
     return streams
+
+
+def _optional_int(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def video_stream(streams: list[Stream]) -> Stream | None:
+    """Return the primary video stream, if present."""
+    return next((s for s in streams if s.codec_type == "video"), None)
 
 
 def audio_streams(streams: list[Stream]) -> list[Stream]:

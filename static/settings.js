@@ -9,6 +9,10 @@ async function load() {
   document.getElementById("llm-model").value = settings.llm_model;
   document.getElementById("vlm-model").value = settings.vlm_model;
   document.getElementById("quality").value = settings.quality;
+  document.getElementById("encoder").value = settings.encoder;
+  document.getElementById("analysis-height").value = settings.analysis_height;
+  document.getElementById("analysis-proxy").checked = !!settings.analysis_proxy;
+  document.getElementById("render-validation").value = settings.render_validation;
   document.getElementById("output-dir").value = settings.output_dir;
   document.getElementById("subtitle-mode").value = settings.subtitle_mode;
   document.getElementById("auto-render").checked = !!settings.auto_render;
@@ -16,8 +20,11 @@ async function load() {
   renderActionGrid(document.getElementById("actions"), settings.actions);
 
   const health = await api("/api/health");
+  for (const option of document.querySelectorAll("#encoder option[data-mac-only]")) {
+    option.disabled = !health.native_macos;
+  }
   document.getElementById("health").textContent =
-    `version ${health.version} · media roots: ${health.media_roots.join(", ") || "none mounted"} · output: ${health.output_dir}`;
+    `version ${health.version} · ${health.platform}/${health.machine} · media roots: ${health.media_roots.join(", ") || "none mounted"} · output: ${health.output_dir}`;
 }
 
 document.getElementById("save").addEventListener("click", async () => {
@@ -27,6 +34,10 @@ document.getElementById("save").addEventListener("click", async () => {
     llm_model: document.getElementById("llm-model").value.trim(),
     vlm_model: document.getElementById("vlm-model").value.trim(),
     quality: Number(document.getElementById("quality").value),
+    encoder: document.getElementById("encoder").value,
+    analysis_height: Number(document.getElementById("analysis-height").value),
+    analysis_proxy: document.getElementById("analysis-proxy").checked,
+    render_validation: document.getElementById("render-validation").value,
     output_dir: document.getElementById("output-dir").value.trim(),
     subtitle_mode: document.getElementById("subtitle-mode").value,
     auto_render: document.getElementById("auto-render").checked,

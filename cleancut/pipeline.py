@@ -209,7 +209,11 @@ def _get_subtitles_and_words(
     return subs, words
 
 
-def _detect_scenes_if_enabled(opts: PipelineOptions, config: Config) -> list[Shot]:
+def _detect_scenes_if_enabled(
+    opts: PipelineOptions,
+    config: Config,
+    analysis_video: Path | None = None,
+) -> list[Shot]:
     if not opts.use_scenes:
         return []
     try:
@@ -219,7 +223,7 @@ def _detect_scenes_if_enabled(opts: PipelineOptions, config: Config) -> list[Sho
         return []
     console.print(f"[cyan]Detecting shot boundaries[/cyan] (threshold={config.scene_threshold})")
     try:
-        shots = detect_shots(opts.video, threshold=config.scene_threshold)
+        shots = detect_shots(analysis_video or opts.video, threshold=config.scene_threshold)
         console.print(f"[green]Found {len(shots)} shots[/green]")
         return shots
     except Exception as e:
@@ -241,8 +245,26 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
         console.print(f"[cyan]Scanning {len(subs)} subtitle lines[/cyan]")
         edl.extend(scan_subtitles(subs, config).decisions)
 
+    # Scene and image detectors do not need source resolution. A timestamp-
+    # preserving 720p proxy avoids decoding every 4K frame through OpenCV while
+    # all edit decisions remain aligned to the original timeline.
+    analysis_video = opts.video
+    if config.analysis_proxy_enabled and (opts.use_scenes or opts.use_visual):
+        try:
+            from cleancut.proxy import analysis_source
+
+            analysis_video = analysis_source(opts.video, config.analysis_max_height)
+            if analysis_video != opts.video:
+                console.print(
+                    f"[cyan]Analysis proxy[/cyan] {analysis_video.name} "
+                    f"(max {config.analysis_max_height}p)"
+                )
+        except Exception as e:
+            console.print(f"[yellow]Analysis proxy unavailable; using source: {e}[/yellow]")
+            analysis_video = opts.video
+
     # Shot boundaries (also used for shot-aware visual scan below).
-    shots = _detect_scenes_if_enabled(opts, config)
+    shots = _detect_scenes_if_enabled(opts, config, analysis_video)
 
     if opts.use_visual and "nudity" in config.enabled_categories:
         from cleancut.visual import scan_video
@@ -253,7 +275,8 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             f"threshold={config.visual_threshold})"
         )
         visual_decisions = _run_detector(
-            "Visual scan", lambda: scan_video(opts.video, config, shots=shots or None).decisions
+            "Visual scan",
+            lambda: scan_video(analysis_video, config, shots=shots or None).decisions,
         )
         edl.extend(visual_decisions)
 
@@ -349,7 +372,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
         )
         vlm_edl_decisions = _run_detector(
             "VLM scan",
-            lambda: vlm_scan(opts.video, shots, subs, edl, vlm_params).decisions,
+            lambda: vlm_scan(analysis_video, shots, subs, edl, vlm_params).decisions,
         )
         if vlm_edl_decisions:
             console.print(f"[green]VLM flagged {len(vlm_edl_decisions)} shot(s)[/green]")
@@ -394,14 +417,17 @@ def render(
     try:
         cuts = edl_to_ranges(edl, "cut")
         mutes = edl_to_ranges(edl, "mute")
-        encoder = config.resolved_encoder()
+        encoder = config.resolved_encoder(opts.video)
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
 
         # Step 1: apply cuts (re-encode if needed).
         if cuts:
             cut_path = work / f"{opts.video.stem}.cut.mp4"
             console.print(f"[cyan]Applying {len(cuts)} cut(s)…[/cyan]")
-            apply_cuts(opts.video, cuts, cut_path, encoder=encoder, quality=config.quality)
+            apply_cuts(
+                opts.video, cuts, cut_path, encoder=encoder, quality=config.quality,
+                validation="quick",
+            )
             mutes = shift_ranges_after_cuts(mutes, cuts)
             subs = adjust_subtitles_for_cuts(subs, cuts)
         else:
@@ -427,6 +453,7 @@ def render(
             burn_subs=bool(srt_for_burn) and not opts.soft_subs,
             encoder=encoder,
             quality=config.quality,
+            validation=config.render_validation,
         )
     finally:
         # Intermediates (e.g. the movie-sized .cut.mp4) would otherwise leak

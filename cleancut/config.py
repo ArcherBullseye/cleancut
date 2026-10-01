@@ -9,8 +9,8 @@ from typing import Literal
 
 from cleancut.constants import (
     DEFAULT_SCENE_THRESHOLD,
-    DEFAULT_VLM_GAPS_RADIUS,
     DEFAULT_VISUAL_THRESHOLD,
+    DEFAULT_VLM_GAPS_RADIUS,
 )
 
 Category = Literal["profanity", "drugs", "sex", "violence", "nudity"]
@@ -61,7 +61,7 @@ PRESETS = {
         "llm_enabled": True,
         "vlm_enabled": True,
         "audio_events_enabled": True,
-        "encoder": "libx264",
+        "encoder": "auto",
         "quality": 18,
     },
 }
@@ -85,6 +85,10 @@ class Config:
     )
     # Visual sampling: examine 1 frame every N seconds.
     visual_sample_seconds: float = 1.0
+    # Decode visual/scene analysis from a small proxy. Detector accuracy does
+    # not benefit from feeding it 4K pixels, while decode cost and memory do.
+    analysis_proxy_enabled: bool = True
+    analysis_max_height: int = 720
     # NudeNet confidence threshold for explicit-class detections.
     # 0.7 chosen after testing — 0.55 fired on shirtless men in action films.
     visual_threshold: float = DEFAULT_VISUAL_THRESHOLD
@@ -137,11 +141,14 @@ class Config:
     corroboration_radius_seconds: float = 5.0
     # Encoder choice for the final render.
     # "videotoolbox" = Apple Silicon hardware H.264 (fast)
+    # "hevc_videotoolbox" = Apple Silicon hardware HEVC Main10 (HDR-safe)
     # "libx264" = software (best quality, slower)
     # "auto" = videotoolbox on macOS, libx264 elsewhere
     encoder: str = "auto"
     # Quality target. For libx264: CRF (lower = better). For videotoolbox: q (higher = better).
     quality: int = 20
+    # none | quick (metadata/duration) | full (decode every output frame)
+    render_validation: str = "quick"
 
     @classmethod
     def load_defaults(cls) -> Config:
@@ -156,9 +163,20 @@ class Config:
         for k, v in PRESETS[name].items():
             setattr(self, k, v)
 
-    def resolved_encoder(self) -> str:
+    def resolved_encoder(self, video_path: Path | None = None) -> str:
         if self.encoder == "auto":
-            return "videotoolbox" if platform.system() == "Darwin" else "libx264"
+            if platform.system() == "Darwin":
+                if video_path is not None:
+                    try:
+                        from cleancut.probe import probe_streams, video_stream
+
+                        source = video_stream(probe_streams(video_path))
+                        if source and source.is_hdr:
+                            return "hevc_videotoolbox"
+                    except Exception:
+                        pass
+                return "videotoolbox"
+            return "libx264"
         return self.encoder
 
     def override_wordlists(self, path: Path | None) -> None:

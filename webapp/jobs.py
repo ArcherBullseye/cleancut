@@ -297,6 +297,10 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         cmd.append("--use-audio-events")
     if not opts.get("use_visual", True):
         cmd.append("--no-visual")
+    if not opts.get("analysis_proxy", True):
+        cmd.append("--no-analysis-proxy")
+    elif opts.get("analysis_height"):
+        cmd += ["--analysis-height", str(opts["analysis_height"])]
     if opts.get("allow_solo_visual"):
         cmd.append("--allow-solo-visual")
     if opts.get("audio_track") not in (None, ""):
@@ -312,6 +316,7 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
         "-o", job["output_path"],
         "--encoder", opts.get("encoder") or "libx264",
         "--quality", str(opts.get("quality", 20)),
+        "--verify-render", opts.get("render_validation") or "quick",
         "--prefer-language", opts.get("prefer_language") or "eng",
     ]
     # Reuse the scan's transcript. Without it, `clean` re-runs Whisper purely to
@@ -513,8 +518,9 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
     output = out_dir / f"{video.stem}.clean.mp4"
 
     render_opts = {
-        "encoder": cfg.get("encoder", "libx264"),
+        "encoder": cfg.get("encoder", "auto"),
         "quality": cfg.get("quality", 20),
+        "render_validation": cfg.get("render_validation", "quick"),
         "subtitle_mode": cfg.get("subtitle_mode", "soft"),
         "prefer_language": opts.get("prefer_language", "eng"),
         "subs_path": str(transcript) if transcript.exists() else "",

@@ -41,6 +41,13 @@ def _cache_key(video: Path, feature: str, config_hash: str) -> Path:
     return CACHE_DIR / f"{h}.{feature}.{config_hash}.json"
 
 
+def artifact_path(video: Path, feature: str, config_hash: str, suffix: str) -> Path:
+    """Stable path for a binary cache artifact associated with a source video."""
+    h = hashlib.sha256(str(video.resolve()).encode("utf-8")).hexdigest()[:16]
+    suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    return CACHE_DIR / f"{h}.{feature}.{config_hash}{suffix}"
+
+
 def config_hash(**fields: Any) -> str:
     """Stable short hash of a config dict — pass only the fields that affect output."""
     payload = json.dumps(fields, sort_keys=True, default=str)
@@ -88,13 +95,16 @@ def clear(video: Path | None = None, feature: str | None = None) -> int:
         return 0
     n = 0
     if video is None:
-        for p in CACHE_DIR.glob("*.json"):
+        for p in CACHE_DIR.iterdir():
+            if not p.is_file():
+                continue
             p.unlink()
             n += 1
         return n
     h = hashlib.sha256(str(video.resolve()).encode("utf-8")).hexdigest()[:16]
-    pattern = f"{h}.{feature}.*.json" if feature else f"{h}.*.json"
+    pattern = f"{h}.{feature}.*" if feature else f"{h}.*"
     for p in CACHE_DIR.glob(pattern):
-        p.unlink()
-        n += 1
+        if p.is_file():
+            p.unlink()
+            n += 1
     return n

@@ -4,6 +4,10 @@ Auto-edit movies for content on your own hardware — mute profanity, cut explic
 scenes, and soften subtitles, with every decision reviewable in the browser
 before anything is rendered. Nothing leaves the box.
 
+The stable 1.x deployment runs as an Umbrel community app. A native Apple
+Silicon 2.0 beta, optimized for reliable 1080p and 4K processing, is documented
+in [MACOS.md](MACOS.md).
+
 This packages [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 (MIT, by Dan Monahan) as an Umbrel community app: the upstream detection
 pipeline, vendored essentially as-is, behind a web UI and a background job queue.

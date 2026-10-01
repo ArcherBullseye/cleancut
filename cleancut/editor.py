@@ -32,7 +32,43 @@ def _require_ffmpeg() -> None:
         raise RuntimeError("ffprobe not found on PATH. It ships with ffmpeg.")
 
 
-def _video_encoder_args(encoder: str, quality: int) -> list[str]:
+def _color_metadata_args(source) -> list[str]:
+    """Copy safe color-description fields to a newly encoded stream."""
+    if source is None:
+        return []
+    args: list[str] = []
+    for flag, value in (
+        ("-color_range", source.color_range),
+        ("-colorspace", source.color_space),
+        ("-color_trc", source.color_transfer),
+        ("-color_primaries", source.color_primaries),
+    ):
+        if value and value.lower() not in {"unknown", "unspecified", "reserved"}:
+            args += [flag, value]
+    return args
+
+
+def _playback_rate_args(source) -> list[str]:
+    """Pin an interoperable CFR using the source's measured average rate.
+
+    The trim/concat filter uses a microsecond time base. Passing that directly
+    to x264/x265 makes them advertise codec levels 6.2/8.5, which Apple players
+    can reject even though the frames decode. Normalizing the rendered edit to
+    the source's average rate restores a normal codec level and stable A/V
+    pacing. Analysis proxies remain timestamp-preserving and are unaffected.
+    """
+    rate = getattr(source, "avg_frame_rate", "") if source is not None else ""
+    try:
+        numerator, denominator = (int(part) for part in rate.split("/", 1))
+        fps = numerator / denominator
+        if numerator > 0 and denominator > 0 and 1 <= fps <= 240:
+            return ["-r", f"{numerator}/{denominator}", "-fps_mode", "cfr"]
+    except (AttributeError, ValueError, ZeroDivisionError):
+        pass
+    return ["-r", "30", "-fps_mode", "cfr"]
+
+
+def _video_encoder_args(encoder: str, quality: int, source=None) -> list[str]:
     """Return ffmpeg flags for a broadly playable H.264 stream.
 
     libx264 otherwise inherits the source pixel format.  A 10-bit or 4:4:4
@@ -46,12 +82,29 @@ def _video_encoder_args(encoder: str, quality: int) -> list[str]:
         q = max(30, min(100, 90 - quality * 2))
         return [
             "-c:v", "h264_videotoolbox", "-q:v", str(q), "-b:v", "0",
-            "-pix_fmt", "yuv420p",
+            "-allow_sw", "1",
+            "-pix_fmt", "yuv420p", *_playback_rate_args(source),
+        ]
+    if encoder == "hevc_videotoolbox":
+        q = max(30, min(100, 90 - quality * 2))
+        return [
+            "-c:v", "hevc_videotoolbox", "-q:v", str(q), "-b:v", "0",
+            "-allow_sw", "1",
+            "-pix_fmt", "p010le", "-profile:v", "main10", "-tag:v", "hvc1",
+            *_playback_rate_args(source),
+            *_color_metadata_args(source),
+        ]
+    if encoder == "libx265":
+        return [
+            "-c:v", "libx265", "-preset", "medium", "-crf", str(quality),
+            "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-tag:v", "hvc1",
+            *_playback_rate_args(source),
+            *_color_metadata_args(source),
         ]
     # libx264 default
     return [
         "-c:v", "libx264", "-preset", "slow", "-crf", str(quality),
-        "-pix_fmt", "yuv420p",
+        "-pix_fmt", "yuv420p", *_playback_rate_args(source),
     ]
 
 
@@ -79,6 +132,86 @@ def _source_video_format(input_path: Path) -> tuple[str, str]:
         # A failed probe should not turn a quick mute-only job into an
         # unexpected multi-hour encode. ffmpeg remains the final validator.
         return "", ""
+
+
+def _source_video_stream(input_path: Path):
+    try:
+        from cleancut.probe import probe_streams, video_stream
+
+        return video_stream(probe_streams(input_path))
+    except Exception:
+        return None
+
+
+def _partial_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f".{output_path.stem}.partial{output_path.suffix}")
+
+
+def _software_fallback(encoder: str) -> str | None:
+    return {
+        "videotoolbox": "libx264",
+        "hevc_videotoolbox": "libx265",
+    }.get(encoder)
+
+
+def _replace_arg_group(cmd: list[str], old: list[str], new: list[str]) -> list[str]:
+    """Replace one contiguous encoder-argument group in an ffmpeg command."""
+    for i in range(len(cmd) - len(old) + 1):
+        if cmd[i:i + len(old)] == old:
+            return cmd[:i] + new + cmd[i + len(old):]
+    raise RuntimeError("internal error: video encoder arguments not found")
+
+
+def _run_with_encoder_fallback(
+    cmd: list[str],
+    *,
+    encoder: str,
+    encoder_args: list[str] | None,
+    source,
+    quality: int,
+    partial: Path,
+    cwd: str | None = None,
+) -> None:
+    """Run ffmpeg and retry in software if VideoToolbox cannot open a session."""
+    try:
+        subprocess.run(cmd, check=True, cwd=cwd)
+        return
+    except subprocess.CalledProcessError:
+        fallback = _software_fallback(encoder)
+        if fallback is None or encoder_args is None:
+            raise
+
+    partial.unlink(missing_ok=True)
+    fallback_args = _video_encoder_args(fallback, quality, source)
+    fallback_cmd = _replace_arg_group(cmd, encoder_args, fallback_args)
+    print(
+        f"[cleancut] VideoToolbox unavailable; retrying render with {fallback}.",
+        flush=True,
+    )
+    subprocess.run(fallback_cmd, check=True, cwd=cwd)
+
+
+def _finish_atomic_output(
+    partial: Path,
+    output: Path,
+    *,
+    expected_duration: float | None,
+    expected_dimensions: tuple[int, int] | None,
+    validation: str,
+) -> None:
+    if validation != "none":
+        from cleancut.media_validation import validate_media
+
+        validate_media(
+            partial,
+            expected_duration=expected_duration,
+            expected_dimensions=expected_dimensions,
+            mode=validation,
+        )
+    # Mock-based command tests do not create their declared output. Real jobs
+    # always request validation and therefore cannot take this compatibility path.
+    if partial.exists():
+        partial.replace(output)
 
 
 def _can_stream_copy_to_apple_mp4(codec: str, pix_fmt: str) -> bool:
@@ -135,9 +268,19 @@ def apply_cuts(
     output_path: Path,
     encoder: str = "libx264",
     quality: int = 20,
+    validation: str = "none",
 ) -> None:
     """Re-encode `input_path` with `cuts` removed, writing to `output_path`."""
     _require_ffmpeg()
+    output_path = output_path.resolve()
+    partial = _partial_output_path(output_path)
+    partial.unlink(missing_ok=True)
+    source_stream = _source_video_stream(input_path)
+    source_dimensions = (
+        (source_stream.width, source_stream.height)
+        if source_stream and source_stream.width and source_stream.height
+        else None
+    )
     if not cuts:
         # Nothing to cut — just remux.
         codec, _ = _source_video_format(input_path)
@@ -145,9 +288,15 @@ def apply_cuts(
             [
                 "ffmpeg", "-y", "-i", str(input_path), "-c", "copy",
                 *_muxer_args(output_path, copied_video_codec=codec),
-                str(output_path),
+                str(partial),
             ],
             check=True,
+        )
+        _finish_atomic_output(
+            partial, output_path,
+            expected_duration=(probe_duration(input_path) if validation != "none" else None),
+            expected_dimensions=source_dimensions,
+            validation=validation,
         )
         return
 
@@ -170,17 +319,35 @@ def apply_cuts(
         f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
     ) + f";[outa]{KNOWN_LAYOUTS}[outa_fmt]"
 
+    encoder_args = _video_encoder_args(encoder, quality, source_stream)
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
         "-filter_complex", filter_complex,
         "-map", "[outv]", "-map", "[outa_fmt]",
-        *_video_encoder_args(encoder, quality),
+        *encoder_args,
         *_audio_encoder_args(input_path),
         *_muxer_args(output_path),
-        str(output_path),
+        str(partial),
     ]
-    subprocess.run(cmd, check=True)
+    try:
+        _run_with_encoder_fallback(
+            cmd,
+            encoder=encoder,
+            encoder_args=encoder_args,
+            source=source_stream,
+            quality=quality,
+            partial=partial,
+        )
+        expected = max(0.0, duration - sum(r.duration for r in cuts))
+        _finish_atomic_output(
+            partial, output_path,
+            expected_duration=expected,
+            expected_dimensions=source_dimensions,
+            validation=validation,
+        )
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def _ffmpeg_has_libass() -> bool:
@@ -202,6 +369,7 @@ def apply_mutes_and_subs(
     burn_subs: bool = True,
     encoder: str = "libx264",
     quality: int = 20,
+    validation: str = "none",
 ) -> None:
     """Apply mute ranges via volume filter; add subtitles either as burn-in (libass)
     or as a soft subtitle track in the container (always works).
@@ -215,6 +383,15 @@ def apply_mutes_and_subs(
     # sees a shell-safe path); relative input/output would resolve there instead.
     input_path = input_path.resolve()
     output_path = output_path.resolve()
+    partial = _partial_output_path(output_path)
+    partial.unlink(missing_ok=True)
+    source_stream = _source_video_stream(input_path)
+    source_dimensions = (
+        (source_stream.width, source_stream.height)
+        if source_stream and source_stream.width and source_stream.height
+        else None
+    )
+    encoder_args: list[str] | None = None
 
     can_burn = burn_subs and srt_path and srt_path.exists() and _ffmpeg_has_libass()
     source_codec, source_pix_fmt = _source_video_format(input_path)
@@ -251,27 +428,51 @@ def apply_mutes_and_subs(
             safe_srt = safe_dir / "subs.srt"
             shutil.copy(str(srt_path), str(safe_srt))
             cmd += ["-vf", "subtitles=subs.srt"]
-            cmd += _video_encoder_args(encoder, quality)
+            encoder_args = _video_encoder_args(encoder, quality, source_stream)
+            cmd += encoder_args
         elif has_soft_subs:
             # Stream-copy video, encode subs into the container. mov_text is
             # MP4-family only; Matroska (and most others) take srt.
             sub_codec = "mov_text" if output_path.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
             cmd += ["-map", "0:v", "-map", "0:a", "-map", "1:0"]
-            cmd += ["-c:v", "copy"] if copy_video else _video_encoder_args(encoder, quality)
+            if copy_video:
+                cmd += ["-c:v", "copy"]
+            else:
+                encoder_args = _video_encoder_args(encoder, quality, source_stream)
+                cmd += encoder_args
             cmd += ["-c:s", sub_codec]
             cmd += ["-metadata:s:s:0", "language=eng",
                     "-metadata:s:s:0", "title=cleancut (softened)"]
         else:
-            cmd += ["-c:v", "copy"] if copy_video else _video_encoder_args(encoder, quality)
+            if copy_video:
+                cmd += ["-c:v", "copy"]
+            else:
+                encoder_args = _video_encoder_args(encoder, quality, source_stream)
+                cmd += encoder_args
 
         copied_codec = source_codec if copy_video else ""
         cmd += [
             *_audio_encoder_args(input_path),
             *_muxer_args(output_path, copied_video_codec=copied_codec),
-            str(output_path),
+            str(partial),
         ]
         cwd = str(safe_dir) if can_burn else None
-        subprocess.run(cmd, check=True, cwd=cwd)
+        _run_with_encoder_fallback(
+            cmd,
+            encoder=encoder,
+            encoder_args=encoder_args,
+            source=source_stream,
+            quality=quality,
+            partial=partial,
+            cwd=cwd,
+        )
+        _finish_atomic_output(
+            partial, output_path,
+            expected_duration=(probe_duration(input_path) if validation != "none" else None),
+            expected_dimensions=source_dimensions,
+            validation=validation,
+        )
     finally:
+        partial.unlink(missing_ok=True)
         if safe_dir is not None:
             shutil.rmtree(safe_dir, ignore_errors=True)

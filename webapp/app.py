@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = "1.0.7"
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.1")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -134,6 +135,8 @@ def api_scan():
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
         "use_visual": bool(body.get("use_visual", True)),
         "allow_solo_visual": bool(body.get("allow_solo_visual", False)),
+        "analysis_height": cfg["analysis_height"],
+        "analysis_proxy": cfg["analysis_proxy"],
     }
     for key in ("use_llm", "use_vlm", "use_audio_events"):
         if key in body:
@@ -196,6 +199,12 @@ def api_job_render(job_id: int):
         overrides["subtitle_mode"] = body["subtitle_mode"]
     if body.get("quality") is not None:
         overrides["quality"] = int(body["quality"])
+    if body.get("encoder") in (
+        "auto", "videotoolbox", "hevc_videotoolbox", "libx264", "libx265"
+    ):
+        overrides["encoder"] = body["encoder"]
+    if body.get("render_validation") in ("none", "quick", "full"):
+        overrides["render_validation"] = body["render_validation"]
     render_id = jobs.queue_render(job_id, overrides=overrides)
     if render_id is None:
         return _bad("Could not queue the render.")
@@ -374,6 +383,9 @@ def api_health():
         "version": APP_VERSION,
         "media_roots": [str(r) for r in media_roots()],
         "output_dir": str(OUTPUT_DIR),
+        "platform": platform.system(),
+        "machine": platform.machine(),
+        "native_macos": platform.system() == "Darwin",
     })
 
 
@@ -382,14 +394,15 @@ def main() -> None:
     jobs.init_db()
     jobs.start_worker()
     port = int(os.environ.get("PORT", "3000"))
+    host = os.environ.get("HOST", "0.0.0.0")
     try:
         from waitress import serve
     except ImportError:
-        app.run(host="0.0.0.0", port=port, threaded=True)
+        app.run(host=host, port=port, threaded=True)
         return
     # Threads, not processes: the job worker is a thread in this process and
     # must not be forked into several competing copies.
-    serve(app, host="0.0.0.0", port=port, threads=8, channel_timeout=1800)
+    serve(app, host=host, port=port, threads=8, channel_timeout=1800)
 
 
 if __name__ == "__main__":

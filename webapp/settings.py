@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import threading
 from typing import Any
 
@@ -40,10 +41,13 @@ DEFAULTS: dict[str, Any] = {
         "nudity": "cut",
     },
     "categories": ["profanity", "drugs", "sex", "nudity"],
-    # libx264 is the only sane choice on the Umbrel Home -- no GPU, and
-    # videotoolbox is macOS-only.
-    "encoder": "libx264",
+    # Resolves to VideoToolbox on native macOS and libx264 in Umbrel/Linux.
+    # HDR sources automatically select 10-bit HEVC VideoToolbox on macOS.
+    "encoder": "auto",
     "quality": 20,
+    "analysis_height": 720,
+    "analysis_proxy": True,
+    "render_validation": "full" if platform.system() == "Darwin" else "quick",
     "prefer_language": "eng",
     # How the softened subtitles reach the output.
     #   soft -- a toggleable track in the container (default)
@@ -85,6 +89,17 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
         for key, value in updates.items():
             if key not in DEFAULTS:
                 continue
+            if key == "encoder" and value not in {
+                "auto", "videotoolbox", "hevc_videotoolbox", "libx264", "libx265"
+            }:
+                continue
+            if key == "render_validation" and value not in {"none", "quick", "full"}:
+                continue
+            if key == "analysis_height":
+                try:
+                    value = max(360, min(1080, int(value)))
+                except (TypeError, ValueError):
+                    continue
             if isinstance(DEFAULTS[key], dict) and isinstance(value, dict):
                 current[key].update(value)
             else:

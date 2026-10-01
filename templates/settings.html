@@ -58,16 +58,48 @@
 
   <div class="two-up">
     <div class="field">
-      <label for="quality">Render quality (CRF -- lower is better, larger)</label>
-      <input type="number" id="quality" min="14" max="32">
+      <label for="encoder">Video encoder</label>
+      <select id="encoder">
+        <option value="auto">Automatic (recommended)</option>
+        <option value="videotoolbox" data-mac-only>Apple H.264 VideoToolbox</option>
+        <option value="hevc_videotoolbox" data-mac-only>Apple HEVC Main10 VideoToolbox</option>
+        <option value="libx264">Software H.264 (slow)</option>
+        <option value="libx265">Software HEVC Main10 (very slow)</option>
+      </select>
+      <p class="muted small">Automatic uses Apple hardware on macOS and selects
+        10-bit HEVC for HDR sources.</p>
     </div>
     <div class="field">
-      <label for="output-dir">Output folder</label>
-      <input type="text" id="output-dir" placeholder="(app data)">
-      <p class="muted small">Absolute path inside the container, e.g.
-        <code>/media/network/NAS/Public/movies-clean</code>. Blank keeps output in the app's own
-        storage, downloadable from the job page.</p>
+      <label for="quality">Render quality (lower is better/larger)</label>
+      <input type="number" id="quality" min="14" max="32">
     </div>
+  </div>
+
+  <div class="two-up">
+    <div class="field">
+      <label for="analysis-height">Analysis proxy height</label>
+      <input type="number" id="analysis-height" min="360" max="1080" step="2">
+      <label class="check"><input type="checkbox" id="analysis-proxy"> Use a cached proxy for scene and visual analysis</label>
+      <p class="muted small">720p is recommended even for 4K sources. Edit timestamps
+        and final output retain the original timeline and resolution.</p>
+    </div>
+    <div class="field">
+      <label for="render-validation">Render verification</label>
+      <select id="render-validation">
+        <option value="quick">Quick metadata and duration check</option>
+        <option value="full">Full frame decode (recommended on Mac)</option>
+        <option value="none">None</option>
+      </select>
+      <p class="muted small">Full verification catches damaged or undecodable frames
+        before the output is accepted.</p>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="output-dir">Output folder</label>
+    <input type="text" id="output-dir" placeholder="(app data)">
+    <p class="muted small">Use an absolute path. On macOS this can be a folder under
+      <code>/Volumes</code> or your home directory. Blank keeps output in CleanCut's data folder.</p>
   </div>
 
   <div class="field">
