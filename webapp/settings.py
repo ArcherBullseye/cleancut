@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     "quality": 20,
     "analysis_height": 720,
     "analysis_proxy": True,
+    "nudity_model": "accurate",
     "render_validation": "full" if platform.system() == "Darwin" else "quick",
     "prefer_language": "eng",
     # How the softened subtitles reach the output.
@@ -94,6 +95,8 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
             }:
                 continue
             if key == "render_validation" and value not in {"none", "quick", "full"}:
+                continue
+            if key == "nudity_model" and value not in {"accurate", "fast"}:
                 continue
             if key == "analysis_height":
                 try:

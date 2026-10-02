@@ -24,6 +24,13 @@ in `~/Library/Application Support/CleanCut`. Source movies are never modified.
 
 - Scene, NudeNet, and VLM analysis use a cached 720p proxy. Decisions retain
   source timestamps, while the final render always reads the original video.
+- Balanced and Thorough use NudeNet's free 640m model. It downloads once
+  (99 MB), is checksum-verified, and thereafter runs fully locally. CleanCut
+  requests CoreML on Apple Silicon and automatically falls back to local CPU
+  inference if a model/operator is unsupported.
+- Possible nudity is rescanned at a higher frame rate. Repeated medium-confidence
+  hits or a single strong explicit hit create the cut, so brief or silent nudity
+  is no longer lost inside a long shot or rejected for lacking dialogue.
 - `Automatic` encoding selects hardware H.264 for SDR and hardware 10-bit HEVC
   for HDR/PQ/HLG input.
 - Edited video is normalized to the source's average frame rate. This prevents

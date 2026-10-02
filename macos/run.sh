@@ -18,6 +18,7 @@ export CLEANCUT_CACHE_DIR="$DATA_DIR/cache/cleancut"
 export XDG_CACHE_HOME="$DATA_DIR/cache"
 export HF_HOME="$DATA_DIR/models/huggingface"
 export TORCH_HOME="$DATA_DIR/models/torch"
+export CLEANCUT_MODEL_DIR="$DATA_DIR/models/cleancut"
 export HOST=${CLEANCUT_HOST:-127.0.0.1}
 export PORT=${CLEANCUT_PORT:-3000}
 export CLEANCUT_VERSION=2.0.0-mac-beta.1
@@ -25,7 +26,7 @@ export PYTHONPATH=$project_dir
 export PYTHONUNBUFFERED=1
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 
-mkdir -p "$DATA_DIR" "$OUTPUT_DIR" "$CLEANCUT_CACHE_DIR" "$HF_HOME" "$TORCH_HOME"
+mkdir -p "$DATA_DIR" "$OUTPUT_DIR" "$CLEANCUT_CACHE_DIR" "$HF_HOME" "$TORCH_HOME" "$CLEANCUT_MODEL_DIR"
 cd "$project_dir"
 
 print "CleanCut Mac: http://$HOST:$PORT"

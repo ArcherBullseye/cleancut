@@ -3,8 +3,8 @@
 Used for two things:
 1. Snapping dialogue-based cuts outward to the nearest shot boundary, so cuts
    land on natural edits rather than mid-shot.
-2. Aggregating visual NudeNet hits per shot — a shot is cut only when a
-   significant fraction of its sampled frames are flagged.
+2. Snapping temporally confirmed NudeNet ranges to complete shots without using
+   whole-shot hit percentages that can hide brief nudity.
 """
 
 from __future__ import annotations

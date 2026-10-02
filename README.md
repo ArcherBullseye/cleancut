@@ -31,8 +31,9 @@ pipeline, vendored essentially as-is, behind a web UI and a background job queue
 Wordlist and context matching, Whisper speech-to-text when there is no subtitle
 track, density clustering, NudeNet frame analysis, Ollama LLM dialogue
 classification, LLaVA vision, and HuggingFace AST audio events. Visual-only
-detections require a second corroborating signal before they fire, and cuts snap
-to shot boundaries.
+VLM judgments require a second corroborating signal before they fire. NudeNet
+explicit-content hits instead use a dense temporal confirmation pass because
+nudity is often silent. Cuts snap to shot boundaries.
 
 ## Presets
 

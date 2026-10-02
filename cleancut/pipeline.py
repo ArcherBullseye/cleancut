@@ -263,16 +263,16 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             console.print(f"[yellow]Analysis proxy unavailable; using source: {e}[/yellow]")
             analysis_video = opts.video
 
-    # Shot boundaries (also used for shot-aware visual scan below).
+    # Shot boundaries are used to snap confirmed edit ranges to natural cuts.
     shots = _detect_scenes_if_enabled(opts, config, analysis_video)
 
     if opts.use_visual and "nudity" in config.enabled_categories:
         from cleancut.visual import scan_video
         console.print(
             f"[cyan]Visual scan[/cyan] "
-            f"({'shot-aware' if shots else 'streak mode'}, "
-            f"sample={config.visual_sample_seconds}s, "
-            f"threshold={config.visual_threshold})"
+            f"({config.nudity_model}, sample={config.visual_sample_seconds}s, "
+            f"candidate={config.visual_threshold}, "
+            f"confirm={config.nudity_rescan_fps:g} fps)"
         )
         visual_decisions = _run_detector(
             "Visual scan",
@@ -384,7 +384,8 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
         edl = _snap_edl_to_shots(edl, shots)
         edl = edl.merge_overlapping(gap=0.0).sorted()
 
-    # Cross-signal corroboration — kill solo-visual flags without dialogue/audio backup.
+    # Cross-signal corroboration applies only to broad VLM judgments. NudeNet
+    # hits have already been temporally confirmed and nudity is often silent.
     if config.require_visual_corroboration:
         from cleancut.corroboration import mark_unsupported_visual
         edl, n_marked = mark_unsupported_visual(
@@ -392,7 +393,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
         )
         if n_marked:
             console.print(
-                f"[yellow]Suppressed {n_marked} solo-visual cut(s)[/yellow] "
+                f"[yellow]Suppressed {n_marked} VLM-only cut(s)[/yellow] "
                 f"(no dialogue/audio within ±{config.corroboration_radius_seconds}s)"
             )
 

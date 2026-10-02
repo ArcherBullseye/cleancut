@@ -12,6 +12,7 @@ async function load() {
   document.getElementById("encoder").value = settings.encoder;
   document.getElementById("analysis-height").value = settings.analysis_height;
   document.getElementById("analysis-proxy").checked = !!settings.analysis_proxy;
+  document.getElementById("nudity-model").value = settings.nudity_model;
   document.getElementById("render-validation").value = settings.render_validation;
   document.getElementById("output-dir").value = settings.output_dir;
   document.getElementById("subtitle-mode").value = settings.subtitle_mode;
@@ -37,6 +38,7 @@ document.getElementById("save").addEventListener("click", async () => {
     encoder: document.getElementById("encoder").value,
     analysis_height: Number(document.getElementById("analysis-height").value),
     analysis_proxy: document.getElementById("analysis-proxy").checked,
+    nudity_model: document.getElementById("nudity-model").value,
     render_validation: document.getElementById("render-validation").value,
     output_dir: document.getElementById("output-dir").value.trim(),
     subtitle_mode: document.getElementById("subtitle-mode").value,

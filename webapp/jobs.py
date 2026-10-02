@@ -303,6 +303,8 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         cmd += ["--analysis-height", str(opts["analysis_height"])]
     if opts.get("allow_solo_visual"):
         cmd.append("--allow-solo-visual")
+    if opts.get("nudity_model") in {"accurate", "fast"}:
+        cmd += ["--nudity-model", opts["nudity_model"]]
     if opts.get("audio_track") not in (None, ""):
         cmd += ["--audio-track", str(opts["audio_track"])]
     return cmd

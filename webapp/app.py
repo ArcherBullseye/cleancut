@@ -137,6 +137,7 @@ def api_scan():
         "allow_solo_visual": bool(body.get("allow_solo_visual", False)),
         "analysis_height": cfg["analysis_height"],
         "analysis_proxy": cfg["analysis_proxy"],
+        "nudity_model": cfg["nudity_model"],
     }
     for key in ("use_llm", "use_vlm", "use_audio_events"):
         if key in body:

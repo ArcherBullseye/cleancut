@@ -9,7 +9,6 @@ from typing import Literal
 
 from cleancut.constants import (
     DEFAULT_SCENE_THRESHOLD,
-    DEFAULT_VISUAL_THRESHOLD,
     DEFAULT_VLM_GAPS_RADIUS,
 )
 
@@ -19,10 +18,11 @@ Action = Literal["mute", "cut", "keep"]
 
 PRESETS = {
     "fast": {
-        "visual_sample_seconds": 2.0,
-        "visual_min_streak": 3,
-        "visual_shot_hit_fraction": 0.6,
-        "visual_threshold": 0.75,
+        "visual_sample_seconds": 1.0,
+        "visual_threshold": 0.55,
+        "nudity_model": "fast",
+        "nudity_strong_threshold": 0.85,
+        "nudity_rescan_fps": 4.0,
         "snap_cuts_to_scenes": False,
         "whisper_model": "base",
         "whisper_word_timestamps": False,
@@ -34,10 +34,11 @@ PRESETS = {
         "quality": 23,
     },
     "balanced": {
-        "visual_sample_seconds": 1.0,
-        "visual_min_streak": 3,
-        "visual_shot_hit_fraction": 0.5,
-        "visual_threshold": 0.7,
+        "visual_sample_seconds": 0.5,
+        "visual_threshold": 0.45,
+        "nudity_model": "accurate",
+        "nudity_strong_threshold": 0.80,
+        "nudity_rescan_fps": 6.0,
         "snap_cuts_to_scenes": True,
         "whisper_model": "small",
         "whisper_word_timestamps": True,
@@ -50,10 +51,11 @@ PRESETS = {
     },
     "thorough": {
         # Default for capable hardware (e.g. M-series Mac, 32GB+ RAM).
-        "visual_sample_seconds": 0.5,
-        "visual_min_streak": 3,
-        "visual_shot_hit_fraction": 0.45,
-        "visual_threshold": 0.65,
+        "visual_sample_seconds": 0.25,
+        "visual_threshold": 0.35,
+        "nudity_model": "accurate",
+        "nudity_strong_threshold": 0.70,
+        "nudity_rescan_fps": 10.0,
         "snap_cuts_to_scenes": True,
         "whisper_model": "large-v3",
         "whisper_word_timestamps": True,
@@ -89,12 +91,21 @@ class Config:
     # not benefit from feeding it 4K pixels, while decode cost and memory do.
     analysis_proxy_enabled: bool = True
     analysis_max_height: int = 720
-    # NudeNet confidence threshold for explicit-class detections.
-    # 0.7 chosen after testing — 0.55 fired on shirtless men in action films.
-    visual_threshold: float = DEFAULT_VISUAL_THRESHOLD
-    # Streak mode: require this many consecutive flagged samples to cut.
+    # First-pass NudeNet confidence threshold. Borderline hits are densely
+    # rescanned before a cut is emitted, so this can favor recall.
+    visual_threshold: float = 0.45
+    # Accurate uses the official 640m model; fast uses bundled 320n.
+    nudity_model: str = "accurate"
+    nudity_strong_threshold: float = 0.80
+    nudity_rescan_fps: float = 6.0
+    nudity_rescan_window_seconds: float = 2.0
+    nudity_min_confirmations: int = 2
+    nudity_batch_size: int = 8
+    nudity_coreml: bool = True
+    nudity_temporal_padding_seconds: float = 0.5
+    nudity_max_gap_seconds: float = 0.75
+    # Deprecated compatibility settings retained for existing config files.
     visual_min_streak: int = 3
-    # Shot-aware mode: fraction of sampled frames within a shot that must hit.
     visual_shot_hit_fraction: float = 0.5
     # Scene detection threshold for PySceneDetect ContentDetector. Lower = more cuts.
     scene_threshold: float = DEFAULT_SCENE_THRESHOLD
@@ -133,10 +144,8 @@ class Config:
     audio_events_threshold: float = 0.45
     audio_events_clip_seconds: float = 8.0
     audio_events_skip_violence: bool = True
-    # Cross-signal corroboration: require visual-only cuts (NudeNet, VLM) to have
-    # a dialogue/audio event within ±N seconds. False positives on visual-only
-    # detectors are common (shirtless men, cigarettes, explosions) — corroboration
-    # demands a second signal before committing the cut.
+    # Cross-signal corroboration is reserved for the broad VLM classifier.
+    # Temporally confirmed NudeNet detections do not require audible dialogue.
     require_visual_corroboration: bool = True
     corroboration_radius_seconds: float = 5.0
     # Encoder choice for the final render.

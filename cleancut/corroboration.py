@@ -2,8 +2,9 @@
 
 A solo VLM flag (a single-frame visual judgment about an unconfirmed scene)
 should not become a cut without supporting evidence from another detector.
-This module marks solo-VLM and solo-NudeNet decisions as `accepted=false`
-unless another signal lies within `radius_seconds` on either side.
+This module marks only solo-VLM decisions as `accepted=false` unless another
+signal lies within `radius_seconds` on either side. NudeNet decisions have
+already passed temporal confirmation and nudity is often silent.
 
 The user can keep them via the interactive review (they remain in the EDL,
 just hidden), or globally with --allow-solo-visual.
@@ -23,13 +24,13 @@ CORROBORATING_SOURCES = {
     "manual",
 }
 
-VISUAL_ONLY_SOURCES = {"vlm", "visual", "visual-shot"}
+LOW_TRUST_VISUAL_SOURCES = {"vlm"}
 
 
 def _is_visual_only(source: str) -> bool:
     """Source string contains only visual signals (no dialogue/audio token)."""
     tokens = set(source.split("+"))
-    if not tokens & VISUAL_ONLY_SOURCES:
+    if not tokens & LOW_TRUST_VISUAL_SOURCES:
         return False
     return not (tokens & CORROBORATING_SOURCES)
 

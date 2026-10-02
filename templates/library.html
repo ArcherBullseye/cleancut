@@ -19,17 +19,17 @@
       <label class="preset">
         <input type="radio" name="preset" value="fast">
         <span class="preset-name">Fast</span>
-        <span class="preset-desc">Whisper base, no LLM or vision. Roughly 15-30 min for a feature.</span>
+        <span class="preset-desc">Lighter local scan cadence, Whisper base, no LLM or VLM.</span>
       </label>
       <label class="preset">
         <input type="radio" name="preset" value="balanced" checked>
         <span class="preset-name">Balanced</span>
-        <span class="preset-desc">Whisper small, word-precise mutes, density clustering. 1-2 hours.</span>
+        <span class="preset-desc">Recommended: accurate NudeNet with temporal rescans and word-precise mutes.</span>
       </label>
       <label class="preset">
         <input type="radio" name="preset" value="thorough">
         <span class="preset-name">Thorough</span>
-        <span class="preset-desc">Everything, including Ollama LLM and vision. Very slow on this hardware -- expect the better part of a day.</span>
+        <span class="preset-desc">Densest nudity scan plus local Ollama LLM/VLM and audio signals; slowest.</span>
       </label>
     </div>
   </div>
@@ -47,7 +47,7 @@
   <details class="advanced">
     <summary>Advanced</summary>
     <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
-    <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow visual-only cuts without corroboration</label>
+    <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow VLM-only cuts without corroboration</label>
     <label class="check"><input type="checkbox" id="auto-render"> Render automatically when the scan finishes (skips review)</label>
     <label class="inline">Audio language
       <input type="text" id="prefer-language" value="eng" size="5">

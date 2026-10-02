@@ -1,280 +1,187 @@
-"""Tests for cleancut/visual.py — NudeNet-based visual scanning.
+"""Tests for the local two-pass NudeNet scanner."""
 
-All cv2, NudeNet, and cache calls are mocked so no GPU/model is needed.
-"""
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cleancut.config import Config
 from cleancut.edl import EditDecisionList
-from cleancut.visual import _is_explicit
+from cleancut.nudity_model import NudityModel
+from cleancut.scenes import Shot
+from cleancut.visual import (
+    _confirmed_edl,
+    _dense_times,
+    _infer_samples,
+    _is_explicit,
+    scan_video,
+)
+
+HIT = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.90}]
+MEDIUM_HIT = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.60}]
+MODEL = NudityModel("test-640m", Path("/tmp/test.onnx"), 640)
 
 
-# ---------------------------------------------------------------------------
-# _is_explicit helper
-# ---------------------------------------------------------------------------
-
-class TestIsExplicit:
-    def test_returns_true_for_explicit_class_above_threshold(self):
-        detections = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.85}]
-        assert _is_explicit(detections, threshold=0.7) is True
-
-    def test_returns_false_for_class_below_threshold(self):
-        detections = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.50}]
-        assert _is_explicit(detections, threshold=0.7) is False
-
-    def test_returns_false_for_non_explicit_class(self):
-        detections = [{"class": "FACE_FEMALE", "score": 0.99}]
-        assert _is_explicit(detections, threshold=0.1) is False
-
-    def test_returns_false_for_empty_detections(self):
-        assert _is_explicit([], threshold=0.5) is False
-
-    def test_any_explicit_class_triggers_true(self):
-        detections = [
-            {"class": "FACE_FEMALE", "score": 0.99},
-            {"class": "MALE_GENITALIA_EXPOSED", "score": 0.80},
-        ]
-        assert _is_explicit(detections, threshold=0.75) is True
+def _config(**values) -> Config:
+    config = Config.load_defaults()
+    config.visual_threshold = 0.45
+    config.nudity_strong_threshold = 0.80
+    config.nudity_min_confirmations = 2
+    config.nudity_temporal_padding_seconds = 0.5
+    config.nudity_coreml = False
+    for key, value in values.items():
+        setattr(config, key, value)
+    return config
 
 
-# ---------------------------------------------------------------------------
-# scan_video with mocked cv2 + NudeDetector
-# ---------------------------------------------------------------------------
+class FakeCapture:
+    def __init__(self, fps=10.0, frames=100):
+        self.fps = fps
+        self.frames = frames
 
-def _make_config(**kw) -> Config:
-    cfg = Config.load_defaults()
-    cfg.visual_threshold = 0.7
-    cfg.visual_sample_seconds = 1.0
-    cfg.visual_min_streak = 2
-    cfg.visual_shot_hit_fraction = 0.5
-    for k, v in kw.items():
-        setattr(cfg, k, v)
-    return cfg
+    def isOpened(self):
+        return True
 
+    def get(self, prop):
+        return self.fps if prop == 5 else self.frames
 
-def _build_cv2_mock(fps: float = 24.0, total_frames: int = 120,
-                    frame_ok: bool = True):
-    """Return a mock cv2 module with a VideoCapture that reads frames."""
-    mock_cv2 = MagicMock()
-    mock_cv2.CAP_PROP_FPS = 5
-    mock_cv2.CAP_PROP_FRAME_COUNT = 7
+    def grab(self):
+        return True
 
-    mock_cap = MagicMock()
-    mock_cap.isOpened.return_value = True
-    mock_cap.get.side_effect = lambda prop: fps if prop == 5 else total_frames
-    mock_cap.read.return_value = (frame_ok, MagicMock() if frame_ok else None)
-    mock_cv2.VideoCapture.return_value = mock_cap
-    return mock_cv2, mock_cap
+    def read(self):
+        return True, object()
+
+    def release(self):
+        pass
 
 
-class TestScanVideoStreakMode:
-    """scan_video in streak mode (no shots argument)."""
-
-    def test_returns_edl_instance(self, tmp_path):
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config(visual_sample_seconds=1.0, visual_min_streak=2)
-
-        mock_cv2, _ = _build_cv2_mock(fps=24.0, total_frames=72)  # 3 s
-        mock_detector = MagicMock()
-        mock_detector.detect.return_value = []  # nothing detected
-
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
-
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=None, use_cache=False)
-
-        assert isinstance(result, EditDecisionList)
-
-    def test_no_detections_returns_empty_edl(self, tmp_path):
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config(visual_sample_seconds=1.0, visual_min_streak=1)
-
-        mock_cv2, _ = _build_cv2_mock(fps=24.0, total_frames=48)
-        mock_detector = MagicMock()
-        mock_detector.detect.return_value = []
-
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
-
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=None, use_cache=False)
-
-        assert len(result.decisions) == 0
-
-    def test_streak_of_hits_produces_cut(self, tmp_path):
-        """Three consecutive frames all flagged should produce a cut decision."""
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        # sample_seconds=1.0, min_streak=2, 5 second video
-        config = _make_config(visual_sample_seconds=1.0, visual_min_streak=2)
-
-        mock_cv2, mock_cap = _build_cv2_mock(fps=10.0, total_frames=50)  # 5 seconds
-        mock_detector = MagicMock()
-        # All frames flag nudity above threshold
-        mock_detector.detect.return_value = [
-            {"class": "FEMALE_BREAST_EXPOSED", "score": 0.90}
-        ]
-
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
-
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=None, use_cache=False)
-
-        assert len(result.decisions) >= 1
-        d = result.decisions[0]
-        assert d.action == config.actions.get("nudity", "cut")
-        assert d.category == "nudity"
-        assert d.source == "visual"
-
-    def test_single_hit_below_streak_not_emitted(self, tmp_path):
-        """A single flagged frame with min_streak=3 should NOT emit a cut."""
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config(visual_sample_seconds=1.0, visual_min_streak=3)
-
-        # 5 second video: hit on frame 2 only, everything else clean
-        mock_cv2, mock_cap = _build_cv2_mock(fps=10.0, total_frames=50)
-        hit_detection = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.90}]
-        clean = []
-        call_results = [clean, hit_detection, clean, clean, clean]
-        mock_detector = MagicMock()
-        mock_detector.detect.side_effect = call_results + [clean] * 100
-
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
-
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=None, use_cache=False)
-
-        assert len(result.decisions) == 0
-
-    def test_cache_hit_returns_without_calling_cv2(self, tmp_path):
-        """When the cache returns a hit, cv2 should never be imported/called."""
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config()
-
-        cached_data = {
-            "decisions": [
-                {
-                    "start": 5.0, "end": 10.0,
-                    "action": "cut", "category": "nudity",
-                    "reason": "cached", "source": "visual",
-                    "text_before": "", "text_after": "",
-                    "accepted": True,
-                }
-            ]
-        }
-
-        with patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=cached_data) as mock_load:
-            result = scan_video(fake_video, config, shots=None, use_cache=True)
-
-        assert len(result.decisions) == 1
-        assert result.decisions[0].start == 5.0
-        mock_load.assert_called_once()
-
-    def test_raises_runtime_error_when_nudenet_not_installed(self, tmp_path):
-        from cleancut.visual import scan_video
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config()
-
-        with patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch.dict(sys.modules, {"cv2": None, "nudenet": None}):
-            with pytest.raises(RuntimeError, match="visual"):
-                scan_video(fake_video, config, shots=None, use_cache=False)
+CV2 = SimpleNamespace(CAP_PROP_FPS=5, CAP_PROP_FRAME_COUNT=7)
 
 
-class TestScanVideoShotAwareMode:
-    """scan_video in shot-aware mode (shots list supplied)."""
+def test_is_explicit_uses_only_exposed_classes_above_threshold():
+    assert _is_explicit(HIT, 0.7)
+    assert not _is_explicit([{"class": "FACE_FEMALE", "score": 0.99}], 0.1)
+    assert not _is_explicit([{"class": "FEMALE_BREAST_EXPOSED", "score": 0.4}], 0.7)
 
-    def test_shot_above_hit_fraction_produces_cut(self, tmp_path):
-        from cleancut.visual import scan_video
-        from cleancut.scenes import Shot
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        # hit_fraction=0.5: if ≥50% of frames flag → cut
-        config = _make_config(visual_shot_hit_fraction=0.5, visual_sample_seconds=1.0)
-        shots = [Shot(start=0.0, end=6.0)]
 
-        mock_cv2, mock_cap = _build_cv2_mock(fps=10.0, total_frames=60)
-        # All frames flag nudity
-        mock_detector = MagicMock()
-        mock_detector.detect.return_value = [
-            {"class": "FEMALE_BREAST_EXPOSED", "score": 0.90}
-        ]
+def test_dense_rescan_surrounds_candidate_at_requested_rate():
+    config = _config(nudity_rescan_fps=4, nudity_rescan_window_seconds=1)
+    samples = _dense_times([5.0], 10.0, config)
+    times = [time for time, _ in samples]
+    assert 4.0 in times
+    assert 5.0 in times
+    assert 6.0 in times
+    assert 4.25 in times
 
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
 
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=shots, use_cache=False)
+def test_batch_inference_is_used():
+    detector = MagicMock()
+    detector.detect_batch.side_effect = lambda frames, batch_size: [[] for _ in frames]
+    cap = FakeCapture(fps=10, frames=50)
+    result = _infer_samples(
+        detector, CV2, cap, 10, [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)],
+        batch_size=2, description="test",
+    )
+    assert len(result) == 3
+    assert detector.detect_batch.call_count == 2
+    assert detector.detect.call_count == 0
 
-        assert len(result.decisions) >= 1
-        d = result.decisions[0]
-        assert d.start == shots[0].start
-        assert d.end == shots[0].end
-        assert d.source == "visual-shot"
 
-    def test_shot_below_hit_fraction_not_cut(self, tmp_path):
-        from cleancut.visual import scan_video
-        from cleancut.scenes import Shot
-        fake_video = tmp_path / "v.mp4"
-        fake_video.write_bytes(b"\x00")
-        config = _make_config(visual_shot_hit_fraction=0.8, visual_sample_seconds=1.0)
-        shots = [Shot(start=0.0, end=6.0)]
+def test_single_strong_hit_is_accepted():
+    detector = SimpleNamespace(_cleancut_model="640m", _cleancut_backend="CPU")
+    edl = _confirmed_edl({5.0: HIT}, 20.0, _config(), "cut", detector)
+    assert len(edl.decisions) == 1
+    assert edl.decisions[0].start == 4.5
+    assert edl.decisions[0].source == "visual"
 
-        mock_cv2, mock_cap = _build_cv2_mock(fps=10.0, total_frames=60)
-        # Only every other frame flags nudity → ~50% hit rate, below 0.8
-        call_count = [0]
 
-        def alternating_detect(frame):
-            call_count[0] += 1
-            if call_count[0] % 2 == 0:
-                return [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.90}]
-            return []
+def test_two_nearby_medium_hits_are_accepted():
+    detector = SimpleNamespace()
+    edl = _confirmed_edl(
+        {5.0: MEDIUM_HIT, 5.2: MEDIUM_HIT}, 20.0, _config(), "cut", detector
+    )
+    assert len(edl.decisions) == 1
+    assert "2 samples" in edl.decisions[0].reason
 
-        mock_detector = MagicMock()
-        mock_detector.detect.side_effect = alternating_detect
 
-        mock_nudenet = MagicMock()
-        mock_nudenet.NudeDetector.return_value = mock_detector
+def test_isolated_medium_hit_is_rejected():
+    edl = _confirmed_edl({5.0: MEDIUM_HIT}, 20.0, _config(), "cut", object())
+    assert not edl.decisions
 
-        with patch.dict(sys.modules, {"cv2": mock_cv2, "nudenet": mock_nudenet}), \
-             patch("cleancut.cache.config_hash", return_value="h"), \
-             patch("cleancut.cache.load", return_value=None), \
-             patch("cleancut.cache.save"):
-            result = scan_video(fake_video, config, shots=shots, use_cache=False)
 
-        assert len(result.decisions) == 0
+def test_brief_hit_in_long_shot_is_not_diluted_by_shot_fraction(tmp_path):
+    video = tmp_path / "movie.mp4"
+    video.write_bytes(b"video")
+    detector = SimpleNamespace(_cleancut_model="640m", _cleancut_backend="CPU")
+    coarse = [(50.0, HIT)]
+    dense = [(49.9, HIT), (50.0, HIT)]
+    with patch("cleancut.visual.resolve_nudity_model", return_value=MODEL), \
+         patch("cleancut.visual._open_detector", return_value=(CV2, detector)), \
+         patch("cleancut.visual._open_capture", side_effect=[FakeCapture(frames=1000), FakeCapture(frames=1000)]), \
+         patch("cleancut.visual._infer_samples", side_effect=[coarse, dense]):
+        edl = scan_video(
+            video, _config(), shots=[Shot(start=0.0, end=100.0)], use_cache=False
+        )
+    assert len(edl.decisions) == 1
+    assert 49.0 < edl.decisions[0].start < 50.0
+    assert edl.decisions[0].end < 51.0
+
+
+def test_no_candidates_returns_empty_edl(tmp_path):
+    video = tmp_path / "movie.mp4"
+    video.write_bytes(b"video")
+    detector = SimpleNamespace(_cleancut_model="640m", _cleancut_backend="CPU")
+    with patch("cleancut.visual.resolve_nudity_model", return_value=MODEL), \
+         patch("cleancut.visual._open_detector", return_value=(CV2, detector)), \
+         patch("cleancut.visual._open_capture", return_value=FakeCapture()), \
+         patch("cleancut.visual._infer_samples", return_value=[]):
+        result = scan_video(video, _config(), use_cache=False)
+    assert isinstance(result, EditDecisionList)
+    assert not result.decisions
+
+
+def test_cache_hit_skips_detector(tmp_path):
+    video = tmp_path / "movie.mp4"
+    video.write_bytes(b"video")
+    cached = {"decisions": [{
+        "start": 5.0, "end": 6.0, "action": "cut", "category": "nudity",
+        "reason": "cached", "source": "visual", "text_before": "",
+        "text_after": "", "accepted": True,
+    }]}
+    with patch("cleancut.visual.resolve_nudity_model", return_value=MODEL), \
+         patch("cleancut.cache.config_hash", return_value="hash"), \
+         patch("cleancut.cache.load", return_value=cached), \
+         patch("cleancut.visual._open_detector") as opened:
+        result = scan_video(video, _config(), use_cache=True)
+    assert result.decisions[0].start == 5.0
+    opened.assert_not_called()
+
+
+def test_missing_visual_dependencies_has_clear_error():
+    from cleancut.visual import _open_detector
+
+    with patch.dict(sys.modules, {"cv2": None, "nudenet": None}), \
+         pytest.raises(RuntimeError, match="Visual detection requires"):
+        _open_detector(_config(), MODEL)
+
+
+def test_coreml_session_failure_keeps_cpu_detector():
+    from cleancut.visual import _open_detector
+
+    original_session = object()
+    detector = SimpleNamespace(onnx_session=original_session, input_name="images")
+    nudenet = SimpleNamespace(NudeDetector=MagicMock(return_value=detector))
+    ort = SimpleNamespace(
+        get_available_providers=lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        InferenceSession=MagicMock(side_effect=RuntimeError("compile failed")),
+    )
+    config = _config(nudity_coreml=True)
+    with patch.dict(sys.modules, {"cv2": CV2, "nudenet": nudenet, "onnxruntime": ort}), \
+         patch("cleancut.visual.platform.system", return_value="Darwin"):
+        _, result = _open_detector(config, MODEL)
+    assert result.onnx_session is original_session
+    assert result._cleancut_backend == "CPU"

@@ -84,6 +84,18 @@
         and final output retain the original timeline and resolution.</p>
     </div>
     <div class="field">
+      <label for="nudity-model">Nudity detector</label>
+      <select id="nudity-model">
+        <option value="accurate">Accurate NudeNet 640m (recommended)</option>
+        <option value="fast">Fast NudeNet 320n</option>
+      </select>
+      <p class="muted small">The accurate free model downloads once (99 MB), then all
+        frames and results remain on this Mac. CoreML is used when available.</p>
+    </div>
+  </div>
+
+  <div class="two-up">
+    <div class="field">
       <label for="render-validation">Render verification</label>
       <select id="render-validation">
         <option value="quick">Quick metadata and duration check</option>

@@ -12,7 +12,8 @@ def test_is_visual_only_pure_vlm():
 
 
 def test_is_visual_only_visual_shot():
-    assert _is_visual_only("visual-shot") is True
+    assert _is_visual_only("visual-shot") is False
+    assert _is_visual_only("visual") is False
 
 
 def test_is_visual_only_false_when_combined_with_dialogue():
@@ -34,6 +35,13 @@ def test_solo_vlm_with_no_neighbors_marked_unaccepted():
     edl, n = mark_unsupported_visual(edl, radius_seconds=5)
     assert n == 1
     assert edl.decisions[0].accepted is False
+
+
+def test_temporally_confirmed_nudenet_does_not_need_audio_or_dialogue():
+    edl = EditDecisionList(decisions=[_d(100, 105, "visual")])
+    edl, n = mark_unsupported_visual(edl, radius_seconds=5)
+    assert n == 0
+    assert edl.decisions[0].accepted is True
 
 
 def test_solo_vlm_with_dialogue_neighbor_kept():

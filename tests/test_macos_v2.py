@@ -219,6 +219,7 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
         "options": json.dumps({
             "analysis_proxy": True,
             "analysis_height": 720,
+            "nudity_model": "accurate",
             "categories": [],
             "actions": {},
             "ollama_host": "",
@@ -226,6 +227,7 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
     }
     scan_cmd = build_scan_command(scan)
     assert scan_cmd[scan_cmd.index("--analysis-height") + 1] == "720"
+    assert scan_cmd[scan_cmd.index("--nudity-model") + 1] == "accurate"
 
     render = {
         "video_path": "/video/movie.mp4",

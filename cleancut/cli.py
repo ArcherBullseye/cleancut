@@ -33,6 +33,9 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("whisper_language", "whisper_language"),
     ("visual_threshold", "visual_threshold"),
     ("visual_sample_seconds", "visual_sample_seconds"),
+    ("nudity_model", "nudity_model"),
+    ("nudity_strong_threshold", "nudity_strong_threshold"),
+    ("nudity_rescan_fps", "nudity_rescan_fps"),
     ("visual_min_streak", "visual_min_streak"),
     ("visual_shot_hit_fraction", "visual_shot_hit_fraction"),
     ("analysis_height", "analysis_max_height"),
@@ -141,6 +144,12 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Disable Whisper word-level timestamps (faster, less precise mutes).")
     p.add_argument("--visual-threshold", type=float, default=None, help="NudeNet confidence threshold (0-1).")
     p.add_argument("--visual-sample-seconds", type=float, default=None, help="Sample 1 frame every N seconds.")
+    p.add_argument("--nudity-model", choices=["accurate", "fast"], default=None,
+                   help="Local NudeNet model: accurate 640m or bundled fast 320n.")
+    p.add_argument("--nudity-strong-threshold", type=float, default=None,
+                   help="Confidence at which one explicit hit is enough after rescan.")
+    p.add_argument("--nudity-rescan-fps", type=float, default=None,
+                   help="Frames/second used to confirm possible nudity.")
     p.add_argument("--visual-min-streak", type=int, default=None,
                    help="Streak mode: consecutive flagged samples needed to emit a cut.")
     p.add_argument("--visual-shot-hit-fraction", type=float, default=None,
@@ -200,7 +209,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--audio-events-threshold", type=float, default=None,
                    help="AST confidence threshold (0-1). Default 0.45.")
     p.add_argument("--allow-solo-visual", action="store_true",
-                   help="Don't require corroboration for visual-only cuts (NudeNet, VLM).")
+                   help="Don't require dialogue/audio corroboration for VLM-only cuts.")
     p.add_argument("--corroboration-radius", type=float, default=None,
                    help="Visual cuts need a dialogue/audio event within ±N seconds (default 5).")
     p.add_argument(
