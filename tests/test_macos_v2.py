@@ -27,6 +27,15 @@ def test_mac_launcher_detects_an_incomplete_virtualenv_before_startup():
     assert "CleanCut installation is incomplete" in launcher
 
 
+def test_library_has_a_locations_escape_from_each_media_root():
+    template = (PROJECT_ROOT / "templates" / "library.html").read_text()
+    javascript = (PROJECT_ROOT / "static" / "library.js").read_text()
+    assert 'id="locations"' in template
+    assert "filename='library.js', v=version" in template
+    assert 'getElementById("locations").addEventListener' in javascript
+    assert 'sessionStorage.removeItem("cleancut.path")' in javascript
+
+
 def _video(**overrides) -> Stream:
     fields = {
         "index": 0,

@@ -57,7 +57,11 @@ async function browse(path) {
   try {
     const data = await api(`/api/browse?path=${encodeURIComponent(path || "")}`);
     renderListing(data);
-    if (path) sessionStorage.setItem("cleancut.path", path);
+    if (path) {
+      sessionStorage.setItem("cleancut.path", path);
+    } else {
+      sessionStorage.removeItem("cleancut.path");
+    }
   } catch (e) {
     listing.innerHTML = "";
     listing.appendChild(el("p", { class: "muted", text: e.message }));
@@ -110,6 +114,10 @@ function onSearch(event) {
 }
 
 document.getElementById("search").addEventListener("input", onSearch);
+document.getElementById("locations").addEventListener("click", () => {
+  document.getElementById("search").value = "";
+  browse("");
+});
 document.getElementById("start-scan").addEventListener("click", startScan);
 document.getElementById("cancel-pick").addEventListener("click", () => {
   picked = null;

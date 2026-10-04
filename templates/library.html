@@ -4,7 +4,10 @@
 <section class="panel">
   <div class="panel-head">
     <h1>Choose a video</h1>
-    <input id="search" type="search" placeholder="Search the library..." autocomplete="off">
+    <div class="row">
+      <button id="locations" type="button">Locations</button>
+      <input id="search" type="search" placeholder="Search the library..." autocomplete="off">
+    </div>
   </div>
   <div id="crumbs" class="crumbs"></div>
   <div id="listing" class="listing"><p class="muted">Loading...</p></div>
@@ -62,4 +65,4 @@
   <p class="muted small">Scans run one at a time on the server. You can close this page -- progress is kept.</p>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='library.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='library.js', v=version) }}"></script>{% endblock %}
