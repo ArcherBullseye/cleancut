@@ -239,6 +239,7 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
     assert "--use-vlm" in scan_cmd
 
     render = {
+        "id": 8,
         "video_path": "/video/movie.mp4",
         "edl_path": "/data/movie.edl.json",
         "output_path": "/data/movie.clean.mp4",
@@ -251,6 +252,8 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
     render_cmd = build_render_command(render)
     assert render_cmd[render_cmd.index("--encoder") + 1] == "auto"
     assert render_cmd[render_cmd.index("--verify-render") + 1] == "full"
+    assert render_cmd[render_cmd.index("-o") + 1].endswith("/8/rendered.mp4")
+    assert render_cmd[render_cmd.index("-o") + 1] != render["output_path"]
 
 
 def test_native_settings_migrate_legacy_umbrel_ollama_defaults():
@@ -267,3 +270,63 @@ def test_native_settings_migrate_legacy_umbrel_ollama_defaults():
     assert migrated["ollama_host"] == "http://127.0.0.1:11434"
     assert migrated["llm_model"] == "qwen3.5:9b"
     assert migrated["vlm_model"] == "qwen3.5:9b"
+
+
+def test_publish_render_atomically_copies_local_file_to_nas(tmp_path):
+    from webapp.jobs import publish_render
+
+    local = tmp_path / "local" / "rendered.mp4"
+    remote = tmp_path / "nas" / "Movie.clean.mp4"
+    local.parent.mkdir()
+    remote.parent.mkdir()
+    local.write_bytes(b"verified-local-render")
+    remote.write_bytes(b"previous-clean-copy")
+
+    with patch("cleancut.media_validation.validate_media") as validate:
+        publish_render(local, remote)
+
+    assert remote.read_bytes() == b"verified-local-render"
+    assert local.exists()
+    assert not (remote.parent / ".Movie.clean.cleancut-uploading.mp4").exists()
+    validate.assert_called_once()
+
+
+def test_failed_nas_publish_preserves_previous_file(tmp_path):
+    from webapp.jobs import publish_render
+
+    local = tmp_path / "rendered.mp4"
+    remote = tmp_path / "nas" / "Movie.clean.mp4"
+    remote.parent.mkdir()
+    local.write_bytes(b"new-render")
+    remote.write_bytes(b"previous-clean-copy")
+
+    with patch("webapp.jobs.shutil.copyfileobj", side_effect=OSError("NAS disconnected")), \
+         pytest.raises(OSError, match="NAS disconnected"):
+        publish_render(local, remote)
+
+    assert remote.read_bytes() == b"previous-clean-copy"
+    assert not (remote.parent / ".Movie.clean.cleancut-uploading.mp4").exists()
+
+
+def test_queue_render_can_return_cleaned_video_beside_nas_source(tmp_path):
+    from webapp import jobs
+
+    nas = tmp_path / "Mounted NAS"
+    nas.mkdir()
+    video = nas / "Movie.mkv"
+    video.write_bytes(b"source")
+    scan = {
+        "id": 12,
+        "kind": "scan",
+        "video_path": str(video),
+        "title": "Movie",
+        "preset": "balanced",
+        "edl_path": str(tmp_path / "movie.edl.json"),
+        "options": json.dumps({"output_location": "source"}),
+    }
+    with patch("webapp.jobs.get_job", return_value=scan), \
+         patch("webapp.jobs.settings_store.load", return_value={}), \
+         patch("webapp.jobs.create_job", return_value=13) as create:
+        assert jobs.queue_render(12) == 13
+
+    assert create.call_args.kwargs["output_path"] == str(nas / "Movie.clean.mp4")

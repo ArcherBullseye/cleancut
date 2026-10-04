@@ -57,6 +57,9 @@ DEFAULTS: dict[str, Any] = {
     #   burn -- painted into the picture, irreversible
     #   none -- no subtitles at all
     "subtitle_mode": "soft",
+    # Native Mac defaults to returning the cleaned copy beside the mounted NAS
+    # source. Umbrel keeps its managed output directory default.
+    "output_location": "source" if _IS_MAC else "folder",
     "output_dir": "",
     "auto_render": False,
 }
@@ -108,6 +111,8 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
             if key == "render_validation" and value not in {"none", "quick", "full"}:
                 continue
             if key == "nudity_model" and value not in {"accurate", "fast"}:
+                continue
+            if key == "output_location" and value not in {"source", "folder"}:
                 continue
             if key == "analysis_height":
                 try:

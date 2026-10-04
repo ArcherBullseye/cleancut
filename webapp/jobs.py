@@ -13,6 +13,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -218,6 +219,39 @@ def read_log(job_id: int, max_bytes: int = 60_000) -> str:
         return fh.read().decode("utf-8", errors="replace")
 
 
+def render_stage_path(job: dict[str, Any]) -> Path:
+    """Local-SSD destination used while rendering a final file for a NAS."""
+    suffix = Path(job["output_path"]).suffix or ".mp4"
+    return job_dir(int(job["id"])) / f"rendered{suffix}"
+
+
+def publish_render(stage: Path, destination: Path) -> None:
+    """Copy a verified local render to its final directory atomically.
+
+    The upload is written to a hidden sibling on the destination filesystem.
+    A disconnect therefore leaves any previous cleaned copy intact and never
+    exposes a partial file under the final name.
+    """
+    from cleancut.media_validation import validate_media
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(
+        f".{destination.stem}.cleancut-uploading{destination.suffix}"
+    )
+    partial.unlink(missing_ok=True)
+    try:
+        with stage.open("rb") as source, partial.open("wb") as target:
+            shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+            target.flush()
+            os.fsync(target.fileno())
+        if partial.stat().st_size != stage.stat().st_size:
+            raise RuntimeError("published file size does not match the local render")
+        validate_media(partial, mode="quick")
+        partial.replace(destination)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
 # --------------------------------------------------------------------------
 # command construction
 # --------------------------------------------------------------------------
@@ -312,10 +346,11 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
 
 def build_render_command(job: dict[str, Any]) -> list[str]:
     opts = json.loads(job["options"] or "{}")
+    local_output = render_stage_path(job)
     cmd = [
         sys.executable, "-u", "-m", "cleancut", "clean", job["video_path"],
         "--edl", job["edl_path"],
-        "-o", job["output_path"],
+        "-o", str(local_output),
         "--encoder", opts.get("encoder") or "libx264",
         "--quality", str(opts.get("quality", 20)),
         "--verify-render", opts.get("render_validation") or "quick",
@@ -490,12 +525,32 @@ def _finish_ok(job_id: int, job: dict[str, Any]) -> None:
             fields.update(status=FAILED, stage="Failed", error="Scan produced no EDL.")
     else:
         out = Path(job["output_path"])
-        # ffmpeg creates the output file before it writes to it, so a render
-        # that dies mid-encode leaves a zero-byte file behind. Existence alone
-        # is not proof of success.
-        if not out.exists() or out.stat().st_size == 0:
-            fields.update(status=FAILED, stage="Failed",
-                          error="Render finished but produced no output file.")
+        stage = render_stage_path(job)
+        if not stage.exists() or stage.stat().st_size == 0:
+            fields.update(
+                status=FAILED, stage="Failed",
+                error="Render finished but produced no verified local output file.",
+            )
+        else:
+            update_job(job_id, stage="Publishing cleaned video", progress=99)
+            try:
+                publish_render(stage, out)
+            except Exception as exc:
+                fields.update(
+                    status=FAILED,
+                    stage="Publish failed",
+                    error=(
+                        f"The video rendered successfully but could not be copied to {out}: {exc}. "
+                        f"The verified local copy remains at {stage}."
+                    ),
+                )
+            else:
+                stage.unlink(missing_ok=True)
+                if not out.exists() or out.stat().st_size == 0:
+                    fields.update(
+                        status=FAILED, stage="Failed",
+                        error="Publish finished but produced no destination file.",
+                    )
     update_job(job_id, **fields)
 
     if fields.get("status") == DONE and job["kind"] == "scan":
@@ -513,10 +568,16 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
     opts = json.loads(scan["options"] or "{}")
     transcript = transcript_path(scan_job_id)
     video = Path(scan["video_path"])
-    out_dir = Path(opts.get("output_dir") or cfg.get("output_dir") or "") or OUTPUT_DIR
-    if not out_dir.is_absolute():
-        out_dir = OUTPUT_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
+    output_location = opts.get("output_location") or cfg.get("output_location", "folder")
+    if output_location == "source":
+        out_dir = video.parent
+    else:
+        out_dir = Path(opts.get("output_dir") or cfg.get("output_dir") or "") or OUTPUT_DIR
+        if not out_dir.is_absolute():
+            out_dir = OUTPUT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+    if not out_dir.is_dir() or not os.access(out_dir, os.W_OK):
+        return None
     output = out_dir / f"{video.stem}.clean.mp4"
 
     render_opts = {

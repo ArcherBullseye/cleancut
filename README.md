@@ -8,6 +8,11 @@ The stable 1.x deployment runs as an Umbrel community app. A native Apple
 Silicon 2.0 beta, optimized for reliable 1080p and 4K processing, is documented
 in [MACOS.md](MACOS.md).
 
+The Mac edition browses Finder-mounted NAS shares under `/Volumes`. It renders
+and validates on local storage before atomically publishing `*.clean.mp4` back
+beside the remote source, so a network interruption cannot replace the source
+with a partial output.
+
 This packages [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 (MIT, by Dan Monahan) as an Umbrel community app: the upstream detection
 pipeline, vendored essentially as-is, behind a web UI and a background job queue.

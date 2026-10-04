@@ -105,10 +105,21 @@
   </div>
 
   <div class="field">
+    <label for="output-location">Cleaned video destination</label>
+    <select id="output-location">
+      <option value="source">Beside the original video (recommended for NAS)</option>
+      <option value="folder">Use the output folder below</option>
+    </select>
+    <p class="muted small">The original is never changed. A movie named
+      <code>Movie.mkv</code> is returned as <code>Movie.clean.mp4</code>.</p>
+  </div>
+
+  <div class="field">
     <label for="output-dir">Output folder</label>
     <input type="text" id="output-dir" placeholder="(app data)">
     <p class="muted small">Use an absolute path. On macOS this can be a folder under
-      <code>/Volumes</code> or your home directory. Blank keeps output in CleanCut's data folder.</p>
+      <code>/Volumes</code> or your home directory. It is used only when the destination
+      above is set to “Use the output folder.”</p>
   </div>
 
   <div class="field">

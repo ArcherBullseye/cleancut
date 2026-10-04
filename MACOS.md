@@ -13,7 +13,9 @@ VideoToolbox encoders and PyTorch can use Metal.
    ./macos/install.sh
    ```
 
-3. Mount the movie share in Finder. It will appear below `/Volumes`.
+3. Mount the movie share in Finder with **Go → Connect to Server** and its
+   `smb://...` address. It will appear below `/Volumes`. Use an account with
+   read/write access if cleaned videos should be returned to the share.
 4. Start Ollama and make sure the local multimodal model is available:
 
    ```sh
@@ -25,6 +27,24 @@ VideoToolbox encoders and PyTorch can use Metal.
 
 Application state, downloaded models, proxies, logs, and default outputs live
 in `~/Library/Application Support/CleanCut`. Source movies are never modified.
+
+## NAS workflow
+
+Finder-mounted SMB/NFS shares under `/Volumes` appear automatically in the
+CleanCut library. By default, a source such as
+`/Volumes/Movies/Film/Film.mkv` is returned as
+`/Volumes/Movies/Film/Film.clean.mp4`.
+
+CleanCut does not encode directly into a network file. It renders and fully
+validates the video on the Mac's local disk, uploads it to a hidden temporary
+file beside the NAS destination, verifies the uploaded container, and then
+renames it into place. A disconnect cannot overwrite the source or expose an
+incomplete file as the finished video. If publishing fails, the job reports the
+error and retains the verified local render in its job directory.
+
+Keep the share mounted until the job finishes. The Mac also needs enough local
+free space for the completed video and, when cuts require it, an intermediate
+copy. A custom mounted location can be added with `CLEANCUT_MEDIA_ROOTS`.
 
 ## 4K defaults
 

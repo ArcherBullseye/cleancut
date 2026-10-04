@@ -2,6 +2,11 @@
 
 let settings = null;
 
+function updateOutputFolderState() {
+  const sourceMode = document.getElementById("output-location").value === "source";
+  document.getElementById("output-dir").disabled = sourceMode;
+}
+
 async function load() {
   settings = (await api("/api/settings")).settings;
   document.getElementById("preset").value = settings.preset;
@@ -16,6 +21,8 @@ async function load() {
   document.getElementById("nudity-model").value = settings.nudity_model;
   document.getElementById("render-validation").value = settings.render_validation;
   document.getElementById("output-dir").value = settings.output_dir;
+  document.getElementById("output-location").value = settings.output_location;
+  updateOutputFolderState();
   document.getElementById("subtitle-mode").value = settings.subtitle_mode;
   document.getElementById("auto-render").checked = !!settings.auto_render;
   renderCategoryChips(document.getElementById("categories"), settings.categories);
@@ -43,6 +50,7 @@ document.getElementById("save").addEventListener("click", async () => {
     nudity_model: document.getElementById("nudity-model").value,
     render_validation: document.getElementById("render-validation").value,
     output_dir: document.getElementById("output-dir").value.trim(),
+    output_location: document.getElementById("output-location").value,
     subtitle_mode: document.getElementById("subtitle-mode").value,
     auto_render: document.getElementById("auto-render").checked,
     categories: readCategoryChips(document.getElementById("categories")),
@@ -56,6 +64,8 @@ document.getElementById("save").addEventListener("click", async () => {
     toast(e.message, true);
   }
 });
+
+document.getElementById("output-location").addEventListener("change", updateOutputFolderState);
 
 document.getElementById("test-ollama").addEventListener("click", async () => {
   const host = document.getElementById("ollama-host").value.trim();

@@ -14,7 +14,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.2")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.3")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -112,6 +112,8 @@ def api_scan():
     video = library.resolve_safe(body.get("path", ""))
     if video is None or not video.is_file():
         return _bad("That file is outside the mounted media roots.", 403)
+    if not os.access(video, os.R_OK):
+        return _bad("That video is not readable. Check the NAS share permissions.", 403)
     if not library.is_video(video):
         return _bad("Not a recognised video file.")
 
@@ -133,6 +135,7 @@ def api_scan():
         "vlm_model": cfg["vlm_model"],
         "prefer_language": body.get("prefer_language") or cfg["prefer_language"],
         "output_dir": cfg["output_dir"],
+        "output_location": cfg["output_location"],
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
         "use_visual": bool(body.get("use_visual", True)),
         "allow_solo_visual": bool(body.get("allow_solo_visual", False)),
@@ -211,7 +214,10 @@ def api_job_render(job_id: int):
         overrides["render_validation"] = body["render_validation"]
     render_id = jobs.queue_render(job_id, overrides=overrides)
     if render_id is None:
-        return _bad("Could not queue the render.")
+        return _bad(
+            "Could not queue the render. Make sure the source/NAS folder is mounted "
+            "and writable, or choose a writable output folder in Settings."
+        )
     return jsonify({"ok": True, "job_id": render_id})
 
 
