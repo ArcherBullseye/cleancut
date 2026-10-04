@@ -18,8 +18,8 @@
     <label for="ollama-host">Ollama host</label>
     <input type="text" id="ollama-host" placeholder="http://ollama_ollama_1:11434">
     <p class="muted small">
-      Powers the LLM dialogue and vision signals used by the Thorough preset. Leave blank to
-      turn both off. On Umbrel the Ollama app is reachable at
+      Powers local dialogue and scene-vision classification. Native macOS uses
+      <code>http://127.0.0.1:11434</code>. Leave blank to turn both off. On Umbrel use
       <code>http://ollama_ollama_1:11434</code>.
     </p>
     <div class="row">
@@ -27,22 +27,19 @@
       <span id="ollama-status" class="muted small"></span>
     </div>
   </div>
+  <label class="check"><input type="checkbox" id="local-ai-enabled"> Use local AI by default for new scans</label>
 
   <div class="two-up">
     <div class="field">
       <label for="llm-model">Dialogue model</label>
       <input type="text" id="llm-model">
-      <p class="muted small">Measured here: <code>llama3.2:3b</code> runs about
-        2.4x faster than <code>llama3.1:8b</code> for this job. Larger models are
-        not worth it on a CPU.</p>
+      <p class="muted small"><code>qwen3.5:9b</code> is the native Mac default.</p>
     </div>
     <div class="field">
       <label for="vlm-model">Vision model</label>
       <input type="text" id="vlm-model">
-      <p class="muted small">Roughly 29 seconds per shot with <code>moondream</code>
-        on four CPU cores, so the Thorough preset's vision pass adds hours. Bigger
-        vision models are far slower still -- one 8B model measured 0.3 tokens per
-        second here.</p>
+      <p class="muted small"><code>qwen3.5:9b</code> accepts images too, so one
+        local model handles both passes.</p>
     </div>
   </div>
 

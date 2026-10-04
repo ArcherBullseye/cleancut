@@ -6,7 +6,7 @@ transcript into scene-sized chunks and asks a local LLM (via Ollama) to
 classify each chunk. Chunks the LLM flags as drug/sex/violence become
 EDL `cut` decisions.
 
-Runs entirely on-device. Default model: llama3.1:8b (~5GB, ~30 tok/s on M-series).
+Runs entirely on-device. Native macOS uses the configured local Qwen model.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ from cleancut.constants import (
 )
 from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 from cleancut.llm_utils import (
+    chat_for_json,
     coerce_confidence,
     make_ollama_client,
     preflight_ollama,
     strip_to_json,
 )
 from cleancut.subtitles import Subtitle
-
 
 SYSTEM_PROMPT = """You are a content classifier for a movie editing tool that removes drug and sex scenes for family viewing. Violence is HEAVILY UNDER-WEIGHTED — most "violent" content in action films stays in.
 
@@ -138,7 +138,8 @@ def _classify_one(client, params: LLMParams, chunk: DialogueChunk) -> dict | Non
         "Return the JSON classification now."
     )
     try:
-        resp = client.chat(
+        text = chat_for_json(
+            client,
             model=params.model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -147,7 +148,6 @@ def _classify_one(client, params: LLMParams, chunk: DialogueChunk) -> dict | Non
             format="json",
             options={"temperature": 0.0, "num_ctx": 4096},
         )
-        text = resp["message"]["content"]
         return json.loads(strip_to_json(text))
     except Exception:
         return None

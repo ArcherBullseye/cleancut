@@ -2,8 +2,8 @@ from cleancut.corroboration import _is_visual_only, mark_unsupported_visual
 from cleancut.edl import EditDecision, EditDecisionList
 
 
-def _d(s, e, source, accepted=True):
-    return EditDecision(start=s, end=e, action="cut", category="nudity",
+def _d(s, e, source, accepted=True, category="drugs"):
+    return EditDecision(start=s, end=e, action="cut", category=category,
                         source=source, accepted=accepted)
 
 
@@ -19,6 +19,10 @@ def test_is_visual_only_visual_shot():
 def test_is_visual_only_false_when_combined_with_dialogue():
     assert _is_visual_only("vlm+subtitle") is False
     assert _is_visual_only("visual-shot+llm-dialogue") is False
+
+
+def test_vlm_merged_with_confirmed_nudenet_is_not_low_trust():
+    assert _is_visual_only("visual+vlm") is False
 
 
 def test_is_visual_only_false_when_combined_with_audio():
@@ -39,6 +43,14 @@ def test_solo_vlm_with_no_neighbors_marked_unaccepted():
 
 def test_temporally_confirmed_nudenet_does_not_need_audio_or_dialogue():
     edl = EditDecisionList(decisions=[_d(100, 105, "visual")])
+    edl, n = mark_unsupported_visual(edl, radius_seconds=5)
+    assert n == 0
+    assert edl.decisions[0].accepted is True
+
+
+def test_explicit_nudity_from_vlm_is_not_suppressed_for_being_silent():
+    edl = EditDecisionList(decisions=[_d(100, 105, "vlm")])
+    edl.decisions[0].category = "nudity"
     edl, n = mark_unsupported_visual(edl, radius_seconds=5)
     assert n == 0
     assert edl.decisions[0].accepted is True

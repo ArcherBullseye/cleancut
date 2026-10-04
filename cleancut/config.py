@@ -127,12 +127,12 @@ class Config:
     density_min_cluster_span: float = 8.0
     # LLM-based contextual dialogue classification (via Ollama).
     llm_enabled: bool = False
-    llm_model: str = "llama3.1:8b"
+    llm_model: str = "qwen3.5:9b" if platform.system() == "Darwin" else "llama3.1:8b"
     llm_host: str | None = None
     llm_min_confidence: float = 0.6
     # VLM-based visual scene classification (via Ollama).
     vlm_enabled: bool = False
-    vlm_model: str = "llava:7b"
+    vlm_model: str = "qwen3.5:9b" if platform.system() == "Darwin" else "llava:7b"
     vlm_mode: str = "silent+gaps"
     vlm_stride: int = 1
     vlm_min_confidence: float = 0.55

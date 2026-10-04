@@ -19,7 +19,7 @@
       <label class="preset">
         <input type="radio" name="preset" value="fast">
         <span class="preset-name">Fast</span>
-        <span class="preset-desc">Lighter local scan cadence, Whisper base, no LLM or VLM.</span>
+        <span class="preset-desc">Lighter scan cadence and Whisper base; local AI follows the option below.</span>
       </label>
       <label class="preset">
         <input type="radio" name="preset" value="balanced" checked>
@@ -47,7 +47,8 @@
   <details class="advanced">
     <summary>Advanced</summary>
     <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
-    <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow VLM-only cuts without corroboration</label>
+    <label class="check"><input type="checkbox" id="use-local-ai" checked> Use local Ollama AI for dialogue context and scene vision</label>
+    <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow non-nudity VLM-only cuts without corroboration</label>
     <label class="check"><input type="checkbox" id="auto-render"> Render automatically when the scan finishes (skips review)</label>
     <label class="inline">Audio language
       <input type="text" id="prefer-language" value="eng" size="5">

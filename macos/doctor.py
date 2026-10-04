@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -67,6 +70,21 @@ def main() -> int:
         else:
             warning("PyTorch Metal", "unavailable; model inference will use the CPU")
             warnings += 1
+
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        models = {item.get("name", "") for item in payload.get("models", [])}
+        status(True, "local Ollama", ollama_host)
+        if "qwen3.5:9b" in models:
+            status(True, "qwen3.5:9b", "installed for dialogue and vision")
+        else:
+            warning("qwen3.5:9b", "not installed; run: ollama pull qwen3.5:9b")
+            warnings += 1
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
+        warning("local Ollama", f"not reachable at {ollama_host}: {exc}")
+        warnings += 1
 
     data_dir = Path(os.environ.get(
         "DATA_DIR", str(Path.home() / "Library" / "Application Support" / "CleanCut")

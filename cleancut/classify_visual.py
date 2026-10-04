@@ -6,7 +6,8 @@ classifier was trained on. Also catches silent shots that have no dialogue
 for the LLM dialogue classifier to read (e.g. the bra close-up at the start
 of the Ong Bak dealer scene).
 
-Runs locally via Ollama. Default model: llava:7b (~5GB, ~2-4s per frame on M-series).
+Runs locally via Ollama. Native macOS can share its multimodal Qwen model with
+the dialogue classifier.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from cleancut.constants import (
 )
 from cleancut.edl import EditDecision, EditDecisionList, resolve_action
 from cleancut.llm_utils import (
+    chat_for_json,
     coerce_confidence,
     make_ollama_client,
     preflight_ollama,
@@ -36,7 +38,6 @@ from cleancut.llm_utils import (
 )
 from cleancut.scenes import Shot
 from cleancut.subtitles import Subtitle
-
 
 SYSTEM_PROMPT = """You are a content classifier for a movie editing tool that removes drug, sex, and violent scenes for family viewing. You will be shown a single frame from a movie.
 
@@ -162,7 +163,8 @@ def _extract_frame(video: Path, t: float, tmp_dir: Path) -> Path | None:
 
 def _classify_frame(client, params: VLMParams, frame_path: Path) -> dict | None:
     try:
-        resp = client.chat(
+        text = chat_for_json(
+            client,
             model=params.model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -175,7 +177,6 @@ def _classify_frame(client, params: VLMParams, frame_path: Path) -> dict | None:
             format="json",
             options={"temperature": 0.0},
         )
-        text = resp["message"]["content"]
         return json.loads(strip_to_json(text))
     except Exception:
         return None

@@ -14,7 +14,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.1")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.2")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -124,6 +124,7 @@ def api_scan():
     if preset not in ("fast", "balanced", "thorough"):
         return _bad("Unknown preset.")
 
+    local_ai = bool(body.get("use_local_ai", cfg["local_ai_enabled"]))
     options: dict[str, Any] = {
         "categories": body.get("categories") or cfg["categories"],
         "actions": body.get("actions") or cfg["actions"],
@@ -138,6 +139,8 @@ def api_scan():
         "analysis_height": cfg["analysis_height"],
         "analysis_proxy": cfg["analysis_proxy"],
         "nudity_model": cfg["nudity_model"],
+        "use_llm": local_ai,
+        "use_vlm": local_ai,
     }
     for key in ("use_llm", "use_vlm", "use_audio_events"):
         if key in body:

@@ -11,6 +11,7 @@ async function loadSettings() {
   renderActionGrid(document.getElementById("actions"), currentSettings.actions);
   document.getElementById("prefer-language").value = currentSettings.prefer_language;
   document.getElementById("auto-render").checked = !!currentSettings.auto_render;
+  document.getElementById("use-local-ai").checked = !!currentSettings.local_ai_enabled;
 }
 
 function renderListing(data) {
@@ -82,6 +83,7 @@ async function startScan() {
       actions: readActionGrid(document.getElementById("actions")),
       prefer_language: document.getElementById("prefer-language").value.trim() || "eng",
       use_visual: document.getElementById("use-visual").checked,
+      use_local_ai: document.getElementById("use-local-ai").checked,
       allow_solo_visual: document.getElementById("allow-solo-visual").checked,
       auto_render: document.getElementById("auto-render").checked,
     };

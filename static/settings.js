@@ -8,6 +8,7 @@ async function load() {
   document.getElementById("ollama-host").value = settings.ollama_host;
   document.getElementById("llm-model").value = settings.llm_model;
   document.getElementById("vlm-model").value = settings.vlm_model;
+  document.getElementById("local-ai-enabled").checked = !!settings.local_ai_enabled;
   document.getElementById("quality").value = settings.quality;
   document.getElementById("encoder").value = settings.encoder;
   document.getElementById("analysis-height").value = settings.analysis_height;
@@ -34,6 +35,7 @@ document.getElementById("save").addEventListener("click", async () => {
     ollama_host: document.getElementById("ollama-host").value.trim(),
     llm_model: document.getElementById("llm-model").value.trim(),
     vlm_model: document.getElementById("vlm-model").value.trim(),
+    local_ai_enabled: document.getElementById("local-ai-enabled").checked,
     quality: Number(document.getElementById("quality").value),
     encoder: document.getElementById("encoder").value,
     analysis_height: Number(document.getElementById("analysis-height").value),

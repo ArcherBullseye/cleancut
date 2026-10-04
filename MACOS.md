@@ -14,7 +14,13 @@ VideoToolbox encoders and PyTorch can use Metal.
    ```
 
 3. Mount the movie share in Finder. It will appear below `/Volumes`.
-4. Double-click `macos/Start CleanCut.command` and open
+4. Start Ollama and make sure the local multimodal model is available:
+
+   ```sh
+   ollama pull qwen3.5:9b
+   ```
+
+5. Double-click `macos/Start CleanCut.command` and open
    <http://127.0.0.1:3000>.
 
 Application state, downloaded models, proxies, logs, and default outputs live
@@ -31,6 +37,10 @@ in `~/Library/Application Support/CleanCut`. Source movies are never modified.
 - Possible nudity is rescanned at a higher frame rate. Repeated medium-confidence
   hits or a single strong explicit hit create the cut, so brief or silent nudity
   is no longer lost inside a long shot or rejected for lacking dialogue.
+- Local AI defaults to Ollama at `127.0.0.1:11434`. The same `qwen3.5:9b`
+  model handles dialogue context and visual scene classification; CleanCut
+  requests non-thinking JSON output so scans do not spend time generating
+  hidden reasoning. No prompts, frames, or results leave the Mac.
 - `Automatic` encoding selects hardware H.264 for SDR and hardware 10-bit HEVC
   for HDR/PQ/HLG input.
 - Edited video is normalized to the source's average frame rate. This prevents
@@ -62,6 +72,8 @@ root with `CLEANCUT_MEDIA_ROOTS`.
 - `CLEANCUT_DATA_DIR` — persistent state and model location.
 - `CLEANCUT_PORT` — web port, default `3000`.
 - `CLEANCUT_HOST` — bind address, default `127.0.0.1`.
+- `CLEANCUT_OLLAMA_HOST` — local Ollama endpoint, default
+  `http://127.0.0.1:11434`.
 
 Binding to `0.0.0.0` exposes the unauthenticated UI to the local network. Do
 not expose this service directly to the internet.

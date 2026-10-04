@@ -17,21 +17,23 @@ from webapp.paths import DATA_DIR
 _SETTINGS_PATH = DATA_DIR / "settings.json"
 _lock = threading.Lock()
 
-# Umbrel puts every app container on the same bridge network, so the Ollama
-# community app is reachable by container name. Empty string disables the
-# LLM/VLM signals entirely.
-DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama_ollama_1:11434")
+_IS_MAC = platform.system() == "Darwin"
+
+# Native macOS talks to the local Ollama service. Umbrel reaches its community
+# app over the Docker bridge. Empty string disables both AI passes.
+DEFAULT_OLLAMA_HOST = os.environ.get(
+    "OLLAMA_HOST",
+    "http://127.0.0.1:11434" if _IS_MAC else "http://ollama_ollama_1:11434",
+)
 
 DEFAULTS: dict[str, Any] = {
     "preset": "balanced",
     "ollama_host": DEFAULT_OLLAMA_HOST,
-    # Measured on an Umbrel Home (4 CPU cores, no GPU), which is what these
-    # have to run on:
-    #   llama3.2:3b   18.9 tok/s prompt   -- upstream's llama3.1:8b managed 7.8
-    #   gemma4:e4b     0.3 tok/s          -- newer and has vision, but unusable here
-    #   moondream     ~29 s per frame     -- the only vision model fast enough to try
-    "llm_model": "llama3.2:3b",
-    "vlm_model": "moondream",
+    # Qwen 3.5 is multimodal, so the Mac can reuse one resident local model for
+    # dialogue and image classification. Keep lightweight Umbrel defaults.
+    "llm_model": "qwen3.5:9b" if _IS_MAC else "llama3.2:3b",
+    "vlm_model": "qwen3.5:9b" if _IS_MAC else "moondream",
+    "local_ai_enabled": _IS_MAC,
     # Per-category action. "keep" means detected but never edited.
     "actions": {
         "profanity": "mute",
@@ -74,6 +76,15 @@ def load() -> dict[str, Any]:
     """Stored settings merged over the defaults."""
     merged = json.loads(json.dumps(DEFAULTS))
     stored = _read()
+    # Migrate only the exact legacy Mac defaults. User-selected model pairs and
+    # custom hosts remain untouched.
+    if _IS_MAC and stored.get("ollama_host") == "http://ollama_ollama_1:11434":
+        stored["ollama_host"] = "http://127.0.0.1:11434"
+    if _IS_MAC and (
+        stored.get("llm_model"), stored.get("vlm_model")
+    ) == ("llama3.2:3b", "moondream"):
+        stored["llm_model"] = "qwen3.5:9b"
+        stored["vlm_model"] = "qwen3.5:9b"
     for key, value in stored.items():
         if key not in DEFAULTS:
             continue

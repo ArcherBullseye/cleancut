@@ -222,12 +222,21 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
             "nudity_model": "accurate",
             "categories": [],
             "actions": {},
-            "ollama_host": "",
+            "ollama_host": "http://127.0.0.1:11434",
+            "llm_model": "qwen3.5:9b",
+            "vlm_model": "qwen3.5:9b",
+            "use_llm": True,
+            "use_vlm": True,
         }),
     }
     scan_cmd = build_scan_command(scan)
     assert scan_cmd[scan_cmd.index("--analysis-height") + 1] == "720"
     assert scan_cmd[scan_cmd.index("--nudity-model") + 1] == "accurate"
+    assert scan_cmd[scan_cmd.index("--llm-host") + 1] == "http://127.0.0.1:11434"
+    assert scan_cmd[scan_cmd.index("--llm-model") + 1] == "qwen3.5:9b"
+    assert scan_cmd[scan_cmd.index("--vlm-model") + 1] == "qwen3.5:9b"
+    assert "--use-llm" in scan_cmd
+    assert "--use-vlm" in scan_cmd
 
     render = {
         "video_path": "/video/movie.mp4",
@@ -242,3 +251,19 @@ def test_web_commands_carry_proxy_and_render_validation_settings():
     render_cmd = build_render_command(render)
     assert render_cmd[render_cmd.index("--encoder") + 1] == "auto"
     assert render_cmd[render_cmd.index("--verify-render") + 1] == "full"
+
+
+def test_native_settings_migrate_legacy_umbrel_ollama_defaults():
+    from webapp import settings
+
+    old = {
+        "ollama_host": "http://ollama_ollama_1:11434",
+        "llm_model": "llama3.2:3b",
+        "vlm_model": "moondream",
+    }
+    with patch("webapp.settings._IS_MAC", True), \
+         patch("webapp.settings._read", return_value=old):
+        migrated = settings.load()
+    assert migrated["ollama_host"] == "http://127.0.0.1:11434"
+    assert migrated["llm_model"] == "qwen3.5:9b"
+    assert migrated["vlm_model"] == "qwen3.5:9b"

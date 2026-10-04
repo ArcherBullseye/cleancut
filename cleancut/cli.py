@@ -209,7 +209,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--audio-events-threshold", type=float, default=None,
                    help="AST confidence threshold (0-1). Default 0.45.")
     p.add_argument("--allow-solo-visual", action="store_true",
-                   help="Don't require dialogue/audio corroboration for VLM-only cuts.")
+                   help="Don't require corroboration for non-nudity VLM-only cuts.")
     p.add_argument("--corroboration-radius", type=float, default=None,
                    help="Visual cuts need a dialogue/audio event within ±N seconds (default 5).")
     p.add_argument(
