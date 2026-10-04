@@ -8,7 +8,7 @@ tqdm==4.66.5
 rich==13.9.4
 
 # Speech-to-text
-openai-whisper==20240930
+openai-whisper==20250625
 numpy==1.26.4
 
 # Visual detection + shot boundaries.

@@ -7,9 +7,19 @@ VideoToolbox encoders and PyTorch can use Metal.
 ## Install
 
 1. Install [Homebrew](https://brew.sh) if it is not already installed.
-2. In Terminal, from this repository, run:
+2. Clone the Mac branch, or update an existing checkout, and run the installer:
 
    ```sh
+   git clone --branch codex/macos-native-v2 https://github.com/ArcherBullseye/cleancut.git "$HOME/cleancut"
+   cd "$HOME/cleancut"
+   ./macos/install.sh
+   ```
+
+   If `$HOME/cleancut` already exists, use this instead:
+
+   ```sh
+   cd "$HOME/cleancut"
+   git pull origin codex/macos-native-v2
    ./macos/install.sh
    ```
 
@@ -24,6 +34,9 @@ VideoToolbox encoders and PyTorch can use Metal.
 
 5. Double-click `macos/Start CleanCut.command` and open
    <http://127.0.0.1:3000>.
+
+Do not type `/path/to/cleancut` literally; documentation sometimes uses it as
+a placeholder. The commands above install this checkout at `$HOME/cleancut`.
 
 Application state, downloaded models, proxies, logs, and default outputs live
 in `~/Library/Application Support/CleanCut`. Source movies are never modified.

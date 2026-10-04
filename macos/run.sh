@@ -10,6 +10,17 @@ if [[ ! -x $venv_dir/bin/python ]]; then
   exit 2
 fi
 
+missing_packages=$("$venv_dir/bin/python" -c '
+import importlib.util
+packages = ("flask", "waitress", "whisper", "torch")
+print(", ".join(name for name in packages if importlib.util.find_spec(name) is None))
+')
+if [[ -n $missing_packages ]]; then
+  print -u2 "CleanCut installation is incomplete (missing: $missing_packages)."
+  print -u2 "From $project_dir, run ./macos/install.sh again."
+  exit 2
+fi
+
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 export DATA_DIR=${CLEANCUT_DATA_DIR:-"$HOME/Library/Application Support/CleanCut"}
 export OUTPUT_DIR=${CLEANCUT_OUTPUT_DIR:-"$DATA_DIR/output"}
@@ -22,7 +33,7 @@ export CLEANCUT_MODEL_DIR="$DATA_DIR/models/cleancut"
 export OLLAMA_HOST=${CLEANCUT_OLLAMA_HOST:-http://127.0.0.1:11434}
 export HOST=${CLEANCUT_HOST:-127.0.0.1}
 export PORT=${CLEANCUT_PORT:-3000}
-export CLEANCUT_VERSION=2.0.0-mac-beta.3
+export CLEANCUT_VERSION=2.0.0-mac-beta.4
 export PYTHONPATH=$project_dir
 export PYTHONUNBUFFERED=1
 export PYTORCH_ENABLE_MPS_FALLBACK=1

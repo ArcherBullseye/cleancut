@@ -12,6 +12,21 @@ from cleancut.editor import _run_with_encoder_fallback, _video_encoder_args
 from cleancut.probe import Stream, probe_streams
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_mac_install_uses_whisper_release_without_legacy_pkg_resources_build():
+    requirements = (PROJECT_ROOT / "requirements.txt").read_text()
+    assert "openai-whisper==20250625" in requirements
+    assert "openai-whisper==20240930" not in requirements
+
+
+def test_mac_launcher_detects_an_incomplete_virtualenv_before_startup():
+    launcher = (PROJECT_ROOT / "macos" / "run.sh").read_text()
+    assert "importlib.util.find_spec" in launcher
+    assert "CleanCut installation is incomplete" in launcher
+
+
 def _video(**overrides) -> Stream:
     fields = {
         "index": 0,
