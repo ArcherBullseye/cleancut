@@ -23,6 +23,7 @@ def test_apply_preset_fast():
     config = Config.load_defaults()
     config.apply_preset("fast")
     assert config.whisper_model == "base"
+    assert config.whisper_word_timestamps is True
     assert config.density_enabled is False
 
 

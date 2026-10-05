@@ -111,6 +111,6 @@ root with `CLEANCUT_MEDIA_ROOTS`.
 Binding to `0.0.0.0` exposes the unauthenticated UI to the local network. Do
 not expose this service directly to the internet.
 
-The balanced/thorough presets retain word-level Whisper timestamps for precise
-mutes, which currently runs Whisper on the CPU. The fast preset disables word
-timestamps and can use Metal (MPS), trading some mute precision for speed.
+All presets retain word-level Whisper timestamps for precise mutes, including
+when a movie already contains subtitles. Whisper alignment currently runs on
+the CPU because its word-timestamp operations are not supported by Metal.

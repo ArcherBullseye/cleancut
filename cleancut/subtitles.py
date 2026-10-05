@@ -252,47 +252,76 @@ def scan_words(words, config: Config) -> EditDecisionList:
     edl = EditDecisionList()
 
     n = len(words)
-    for i, w in enumerate(words):
+    trim_chars = " \t\r\n.,!?;:\"'“”‘’()[]{}<>—–-…"
+    for i, _word in enumerate(words):
+        best: tuple[str, str, str, int, str] | None = None
+        # (category, matched, strength, final_word_offset, window_text)
+        best_score = (-1, False, -1)  # (severity, is_strong, matched words)
         for window_size in (1, 2, 3):
             j = i + window_size
             if j > n:
                 break
             window = words[i:j]
-            text = " ".join(x.text for x in window).strip(" .,!?-")
+            pieces: list[str] = []
+            spans: list[tuple[int, int, int]] = []
+            cursor = 0
+            for offset, item in enumerate(window):
+                token = item.text.strip(trim_chars)
+                if not token:
+                    continue
+                if pieces:
+                    cursor += 1
+                start = cursor
+                pieces.append(token)
+                cursor += len(token)
+                spans.append((start, cursor, offset))
+            text = " ".join(pieces)
             if not text:
                 continue
-            best: tuple[str, str, str] | None = None  # (category, matched, strength)
-            best_score = (-1, False)  # (severity, is_strong)
             for category, pats in patterns.items():
                 if category not in config.enabled_categories:
                     continue
                 for pat, strength in pats:
-                    m = pat.search(text)
-                    if m:
+                    for match in pat.finditer(text):
+                        matched_offsets = [
+                            offset for start, end, offset in spans
+                            if start < match.end() and end > match.start()
+                        ]
+                        # The hit is emitted only from the window that starts
+                        # on its first token. Otherwise "what the fuck" would
+                        # also create ranges for "what the" and "the fuck".
+                        if not matched_offsets or matched_offsets[0] != 0:
+                            continue
                         sev = CATEGORY_SEVERITY.get(category, 0)
-                        score = (sev, strength == "strong")
+                        score = (sev, strength == "strong", len(matched_offsets))
                         if score > best_score:
-                            best = (category, m.group(0), strength)
+                            best = (
+                                category,
+                                match.group(0),
+                                strength,
+                                matched_offsets[-1],
+                                text,
+                            )
                             best_score = score
-            if best is None:
-                continue
-            category, matched, strength = best
-            action = config.actions.get(category, "mute")
-            if action == "keep":
-                continue
-            reason_prefix = "weak: " if strength == "weak" else "matched: "
-            edl.add(
-                EditDecision(
-                    start=window[0].start,
-                    end=window[-1].end,
-                    action=action,
-                    category=category,
-                    reason=reason_prefix + matched.lower(),
-                    text_before=text,
-                    text_after=soften_text(text, config.replacements, config.wordlists),
-                    source="whisper-word",
-                )
+
+        if best is None:
+            continue
+        category, matched, strength, final_offset, text = best
+        action = config.actions.get(category, "mute")
+        if action == "keep":
+            continue
+        reason_prefix = "weak: " if strength == "weak" else "matched: "
+        edl.add(
+            EditDecision(
+                start=words[i].start,
+                end=words[i + final_offset].end,
+                action=action,
+                category=category,
+                reason=reason_prefix + matched.lower(),
+                text_before=text,
+                text_after=soften_text(text, config.replacements, config.wordlists),
+                source="whisper-word",
             )
-            break
+        )
 
     return _filter_weak_without_context(edl)

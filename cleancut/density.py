@@ -89,9 +89,12 @@ def find_clusters(edl: EditDecisionList, params: DensityParams) -> EditDecisionL
             if span >= params.min_cluster_span:
                 cats = sorted({e.category.split("+")[0] for e in events[i:k + 1]})
                 category = "+".join(cats)
-                # A guard, not `continue`: the `i = k + 1` below must still run.
+                # Density is a scene-level signal. It may promote configured
+                # cuts, but it must never stretch word-level mutes across the
+                # gaps between nearby words.
                 action = resolve_action(category, params.actions)
-                if action != "keep":
+                # A guard, not `continue`: the `i = k + 1` below must still run.
+                if action == "cut":
                     out.append(
                         EditDecision(
                             start=max(0.0, cluster_start - params.pad_seconds),

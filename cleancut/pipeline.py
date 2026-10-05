@@ -91,14 +91,22 @@ class PipelineOptions:
 
 
 def _get_subtitles_and_words(
-    opts: PipelineOptions, config: Config
-) -> tuple[list[Subtitle], list]:
+    opts: PipelineOptions,
+    config: Config,
+    *,
+    require_word_precision: bool = False,
+) -> tuple[list[Subtitle], list[Word]]:
     """Resolve subtitles in this priority:
 
     1. Explicit --subs path.
     2. Best sidecar .srt found beside the video (Plex naming, language-aware).
     3. Best embedded *text* subtitle track in the container.
     4. Whisper transcription of the preferred-language audio track.
+
+    A scan that requests ``require_word_precision`` still runs local Whisper
+    alignment when ordinary subtitles were found but have no ``.words.json``
+    sidecar. The supplied subtitles remain the caption source; only Whisper's
+    word timings are used for tight audio mutes.
     """
     from cleancut.probe import (
         extract_audio_to_wav,
@@ -109,40 +117,69 @@ def _get_subtitles_and_words(
         probe_streams,
     )
 
+    subs: list[Subtitle] = []
+    words: list[Word] = []
+    streams = None
+
     if opts.subs:
         if not opts.subs.exists():
             # A typo'd --subs path must not silently fall through to an
             # hours-long Whisper transcription.
             raise ValueError(f"--subs file not found: {opts.subs}")
         console.print(f"[cyan]Reading subtitles[/cyan] {opts.subs}")
-        return read_srt(opts.subs), _load_words_sidecar(opts.subs)
+        subs = read_srt(opts.subs)
+        words = _load_words_sidecar(opts.subs)
+    else:
+        sidecar = find_sidecar_subtitle(opts.video, prefer_language=opts.prefer_language)
+        if sidecar:
+            console.print(f"[cyan]Found sidecar .srt[/cyan] {sidecar}")
+            subs = read_srt(sidecar)
+            words = _load_words_sidecar(sidecar)
+        else:
+            streams = probe_streams(opts.video)
+            embedded = pick_embedded_subtitle(streams, prefer_language=opts.prefer_language)
+            if embedded:
+                console.print(
+                    f"[cyan]Extracting embedded {embedded.codec_name} subtitle "
+                    f"(lang={embedded.language})[/cyan]"
+                )
+                extracted = extract_text_subtitle(opts.video, embedded.index)
+                if extracted:
+                    subs = read_srt(extracted)
 
-    sidecar = find_sidecar_subtitle(opts.video, prefer_language=opts.prefer_language)
-    if sidecar:
-        console.print(f"[cyan]Found sidecar .srt[/cyan] {sidecar}")
-        return read_srt(sidecar), _load_words_sidecar(sidecar)
-
-    streams = probe_streams(opts.video)
-    embedded = pick_embedded_subtitle(streams, prefer_language=opts.prefer_language)
-    if embedded:
-        console.print(
-            f"[cyan]Extracting embedded {embedded.codec_name} subtitle "
-            f"(lang={embedded.language})[/cyan]"
-        )
-        extracted = extract_text_subtitle(opts.video, embedded.index)
-        if extracted:
-            return read_srt(extracted), []
+    needs_whisper = not subs or (
+        require_word_precision and config.whisper_word_timestamps and not words
+    )
+    if not needs_whisper:
+        return subs, words
 
     if not opts.use_whisper:
-        console.print("[yellow]No subtitles and Whisper disabled — skipping dialogue scan.[/yellow]")
-        return [], []
+        if subs and require_word_precision:
+            console.print(
+                "[yellow]Word-precise muting unavailable because Whisper is disabled; "
+                "using subtitle-line timing.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]No subtitles and Whisper disabled — skipping dialogue scan.[/yellow]"
+            )
+        return subs, words
+
+    if subs:
+        console.print(
+            "[cyan]Aligning dialogue with local Whisper word timestamps[/cyan] "
+            "(captions will remain unchanged)"
+        )
+
+    if streams is None:
+        streams = probe_streams(opts.video)
 
     # Pick which audio track to feed Whisper. A bad --audio-track raises
     # ValueError, which the CLI's top-level handler reports.
     track = pick_audio_track(streams, opts.audio_track, prefer_language=opts.prefer_language)
     if track is None:
         console.print("[yellow]No audio tracks found — skipping dialogue scan.[/yellow]")
-        return [], []
+        return subs, words
 
     console.print(
         f"[cyan]Using audio track[/cyan] index={track.index} lang={track.language} "
@@ -162,8 +199,8 @@ def _get_subtitles_and_words(
     hit = _cache.load(opts.video, "whisper", h)
     if hit is not None:
         console.print("[green]Whisper transcript loaded from cache[/green]")
-        subs = [Subtitle(**s) for s in hit.get("subs", [])]
-        words = [Word(**w) for w in hit.get("words", [])]
+        whisper_subs = [Subtitle(**s) for s in hit.get("subs", [])]
+        whisper_words = [Word(**w) for w in hit.get("words", [])]
     else:
         import dataclasses
 
@@ -176,7 +213,7 @@ def _get_subtitles_and_words(
             f"device={device} word_timestamps={config.whisper_word_timestamps}"
         )
         try:
-            subs, words = transcribe(
+            whisper_subs, whisper_words = transcribe(
                 opts.video,
                 model_name=config.whisper_model,
                 device=device,
@@ -187,9 +224,16 @@ def _get_subtitles_and_words(
         finally:
             audio_path.unlink(missing_ok=True)
         _cache.save(opts.video, "whisper", h, {
-            "subs": [dataclasses.asdict(s) for s in subs],
-            "words": [dataclasses.asdict(w) for w in words],
+            "subs": [dataclasses.asdict(s) for s in whisper_subs],
+            "words": [dataclasses.asdict(w) for w in whisper_words],
         })
+
+    # Preserve authored/embedded captions, but take the aligned word clock
+    # from Whisper. When no captions existed, Whisper supplies both.
+    if not subs:
+        subs = whisper_subs
+    if not words:
+        words = whisper_words
 
     # Persist the transcript so subsequent scans can reuse it without re-running Whisper.
     if opts.save_transcript:
@@ -233,7 +277,7 @@ def _detect_scenes_if_enabled(
 
 def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, list[Subtitle]]:
     """Run all detectors and produce a merged EDL."""
-    subs, words = _get_subtitles_and_words(opts, config)
+    subs, words = _get_subtitles_and_words(opts, config, require_word_precision=True)
 
     edl = EditDecisionList(video_path=str(opts.video), subtitle_path=str(opts.subs or ""))
 

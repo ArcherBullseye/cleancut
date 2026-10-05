@@ -13,6 +13,10 @@ and validates on local storage before atomically publishing `*.clean.mp4` back
 beside the remote source, so a network interruption cannot replace the source
 with a partial output.
 
+Profanity mutes use local Whisper word timestamps—even when a movie already
+has embedded or sidecar subtitles—so the audio edit covers the matched word
+rather than the entire subtitle sentence.
+
 This packages [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 (MIT, by Dan Monahan) as an Umbrel community app: the upstream detection
 pipeline, vendored essentially as-is, behind a web UI and a background job queue.

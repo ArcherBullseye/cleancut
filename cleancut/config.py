@@ -25,7 +25,7 @@ PRESETS = {
         "nudity_rescan_fps": 4.0,
         "snap_cuts_to_scenes": False,
         "whisper_model": "base",
-        "whisper_word_timestamps": False,
+        "whisper_word_timestamps": True,
         "density_enabled": False,
         "llm_enabled": False,
         "vlm_enabled": False,

@@ -100,6 +100,7 @@ class TestDensity:
         config.density_enabled = True
         config.vlm_enabled = False
         config.audio_events_enabled = False
+        config.actions["drugs"] = "cut"
 
         opts = PipelineOptions(video=Path("/fake.mp4"), use_visual=False,
                                use_whisper=False, use_scenes=False)

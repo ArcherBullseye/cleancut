@@ -1,10 +1,34 @@
 """Unit tests for pipeline helpers that don't require external models."""
 from __future__ import annotations
 
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
-from cleancut.edl import EditDecisionList, EditDecision
+from cleancut.edl import EditDecision, EditDecisionList
+
+
+def test_build_edl_requests_word_precision():
+    from cleancut.config import Config
+    from cleancut.pipeline import PipelineOptions, build_edl
+
+    config = Config.load_defaults()
+    config.density_enabled = False
+    config.llm_enabled = False
+    config.vlm_enabled = False
+    config.audio_events_enabled = False
+    opts = PipelineOptions(
+        video=Path("/nonexistent/video.mp4"),
+        use_visual=False,
+        use_whisper=True,
+        use_scenes=False,
+    )
+
+    with patch(
+        "cleancut.pipeline._get_subtitles_and_words", return_value=([], [])
+    ) as get_dialogue:
+        build_edl(opts, config)
+
+    get_dialogue.assert_called_once_with(opts, config, require_word_precision=True)
 
 
 def test_snap_edl_to_shots_empty_shots():

@@ -56,10 +56,10 @@ class TestDensityRespectsActions:
         out = find_clusters(_events("profanity"), self.params)
         assert [d.action for d in out.decisions] == ["cut"]
 
-    def test_cluster_is_muted_when_category_is_muted(self):
+    def test_cluster_does_not_expand_word_mutes_when_category_is_muted(self):
         params = DensityParams(**{**vars(self.params), "actions": {"profanity": "mute"}})
         out = find_clusters(_events("profanity"), params)
-        assert [d.action for d in out.decisions] == ["mute"]
+        assert list(out.decisions) == []
 
     def test_cluster_is_dropped_when_category_is_kept(self):
         """The loop must still advance -- a `continue` here would hang."""

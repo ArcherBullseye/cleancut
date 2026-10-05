@@ -102,6 +102,42 @@ class TestWordsSidecarReadBack:
         assert len(words) == 1
         assert words[0].text == "hello"
 
+    def test_authored_subtitles_are_word_aligned_for_scans(self, tmp_path):
+        """Existing captions supply display text, but must not force a whole
+        subtitle line to become the audio mute interval."""
+        from cleancut.pipeline import PipelineOptions, _get_subtitles_and_words
+        from cleancut.probe import Stream
+
+        video = tmp_path / "movie.mp4"
+        video.write_bytes(b"video")
+        captions = tmp_path / "movie.srt"
+        captions.write_text(
+            "1\n00:00:10,000 --> 00:00:14,000\nKeep the authored caption text.\n"
+        )
+        wav = tmp_path / "audio.wav"
+        whisper_subs = [Subtitle(index=1, start=10.0, end=14.0, text="different transcript")]
+        whisper_words = [Word(start=11.2, end=11.55, text="fuck", probability=0.98)]
+        streams = [Stream(index=1, codec_name="aac", codec_type="audio", language="eng")]
+        opts = PipelineOptions(video=video, subs=captions)
+
+        def fake_extract(*_args):
+            wav.write_bytes(b"audio")
+            return wav
+
+        with patch("cleancut.probe.probe_streams", return_value=streams), \
+             patch("cleancut.probe.extract_audio_to_wav", side_effect=fake_extract), \
+             patch(
+                 "cleancut.transcribe.transcribe",
+                 return_value=(whisper_subs, whisper_words),
+             ) as transcribe:
+            subs, words = _get_subtitles_and_words(
+                opts, Config.load_defaults(), require_word_precision=True,
+            )
+
+        assert subs[0].text == "Keep the authored caption text."
+        assert [(w.start, w.end, w.text) for w in words] == [(11.2, 11.55, "fuck")]
+        transcribe.assert_called_once()
+
 
 class _CuttingClient:
     """Ollama client that flags everything as a confident sex scene."""
