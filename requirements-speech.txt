@@ -1,0 +1,6 @@
+# Optional companion only. Keep MLX/transformers separate from Whisper/NudeNet.
+mlx-audio[tts]==0.5.8
+mlx==0.32.3
+Flask==3.0.3
+waitress==3.0.0
+srt==3.5.3

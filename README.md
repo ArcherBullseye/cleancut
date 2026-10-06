@@ -17,6 +17,13 @@ Profanity mutes use local Whisper word timestamps—even when a movie already
 has embedded or sidecar subtitles—so the audio edit covers the matched word
 rather than the entire subtitle sentence.
 
+The Mac beta also offers optional local Qwen3-TTS actor-voice replacements
+for profanity, with audio previews and word-only mute fallback. Host the MLX
+speech companion alongside Ollama on the AI Mac (separate port 8765), then
+enable it in Settings. See the [speech setup](MACOS.md#optional-actor-voice-profanity-replacement-beta7).
+This is experimental dubbing; seamless background-music preservation is not
+implemented yet.
+
 This packages [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 (MIT, by Dan Monahan) as an Umbrel community app: the upstream detection
 pipeline, vendored essentially as-is, behind a web UI and a background job queue.

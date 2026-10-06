@@ -62,6 +62,10 @@ DEFAULTS: dict[str, Any] = {
     "output_location": "source" if _IS_MAC else "folder",
     "output_dir": "",
     "auto_render": False,
+    "profanity_audio": "mute",
+    "speech_host": os.environ.get("CLEANCUT_SPEECH_HOST", "http://127.0.0.1:8765"),
+    "speech_model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+    "speech_token": os.environ.get("CLEANCUT_SPEECH_TOKEN", ""),
 }
 
 
@@ -114,6 +118,12 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
                 continue
             if key == "output_location" and value not in {"source", "folder"}:
                 continue
+            if key == "profanity_audio" and value not in {"mute", "replace"}:
+                continue
+            if key in {"speech_host", "speech_model", "speech_token"}:
+                if not isinstance(value, str) or len(value) > 512:
+                    continue
+                value = value.strip()
             if key == "analysis_height":
                 try:
                     value = max(360, min(1080, int(value)))
@@ -126,5 +136,7 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = _SETTINGS_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(current, indent=2))
+        # Settings may contain the shared speech credential.
+        tmp.chmod(0o600)
         tmp.replace(_SETTINGS_PATH)
     return current

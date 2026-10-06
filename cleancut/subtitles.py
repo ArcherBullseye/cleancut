@@ -307,6 +307,9 @@ def scan_words(words, config: Config) -> EditDecisionList:
         if best is None:
             continue
         category, matched, strength, final_offset, text = best
+        # Wider matching windows must not leak surrounding words into the
+        # spoken replacement or its review label.
+        text = " ".join(w.text.strip(trim_chars) for w in words[i:i + final_offset + 1])
         action = config.actions.get(category, "mute")
         if action == "keep":
             continue
@@ -321,6 +324,13 @@ def scan_words(words, config: Config) -> EditDecisionList:
                 text_before=text,
                 text_after=soften_text(text, config.replacements, config.wordlists),
                 source="whisper-word",
+                word_edits=[{
+                    "start": words[i].start,
+                    "end": words[i + final_offset].end,
+                    "text_before": text,
+                    "text_after": soften_text(text, config.replacements, config.wordlists),
+                    "category": category,
+                }],
             )
         )
 

@@ -69,6 +69,7 @@ def save_edl(path: str | Path, data: dict[str, Any]) -> None:
                 "text_after": d.get("text_after", ""),
                 "source": d.get("source", ""),
                 "accepted": bool(d.get("accepted", True)),
+                "word_edits": d.get("word_edits", []),
             }
             for d in data.get("decisions", [])
         ],

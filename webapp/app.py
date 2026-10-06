@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.6")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.7")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -384,6 +385,70 @@ def api_ollama():
         return jsonify({"ok": True, "host": host, "models": models})
     except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as e:
         return jsonify({"ok": False, "host": host, "reason": str(e), "models": []})
+
+
+def _speech_config(updates: dict | None = None):
+    from cleancut.config import Config
+
+    cfg = settings_store.load()
+    for key in ("speech_host", "speech_model", "speech_token"):
+        if updates and key in updates:
+            cfg[key] = updates[key]
+    return Config(profanity_audio="replace", speech_host=cfg["speech_host"],
+                  speech_model=cfg["speech_model"], speech_token=cfg["speech_token"])
+
+
+@app.route("/api/speech", methods=["POST"])
+def api_speech():
+    from cleancut.speech import check_service
+
+    try:
+        health = check_service(_speech_config(request.get_json(silent=True) or {}))
+        return jsonify(ok=True, model=health["model"], model_loaded=health.get("model_loaded", False))
+    except Exception as exc:
+        return jsonify(ok=False, reason=str(exc))
+
+
+@app.route("/api/job/<int:job_id>/speech/<int:index>", methods=["POST"])
+def api_speech_preview(job_id: int, index: int):
+    from cleancut.edl import EditDecisionList
+    from cleancut.probe import pick_audio_track, probe_streams
+    from cleancut.speech import eligible_words, prepare_replacements
+    from cleancut.subtitles import read_srt
+
+    job, path, err = _edl_job(job_id)
+    if err:
+        return err
+    video = _video_for(job)
+    if video is None or not video.is_file():
+        return _bad("The source share is not mounted.", 404)
+    edl = EditDecisionList.from_json(path)
+    if not 0 <= index < len(edl.decisions):
+        return _bad("No such decision.", 404)
+    # Preview the word only, not the surrounding movie. Use the same cached
+    # waveform at render time so an audition is not randomly generated again.
+    selected = EditDecisionList(decisions=[edl.decisions[index], *edl.by_action("cut")])
+    if not eligible_words(selected, []):
+        return _bad("No accepted, word-precise profanity mute. Rescan older jobs first.")
+    transcript = jobs.transcript_path(job_id)
+    if not transcript.exists():
+        return _bad("This scan has no saved reference transcript. Please scan again.")
+    options = json.loads(job["options"] or "{}")
+    try:
+        track = pick_audio_track(probe_streams(video), options.get("audio_track"),
+                                 prefer_language=options.get("prefer_language", "eng"))
+        if track is None:
+            return _bad("No usable audio track.")
+        with tempfile.TemporaryDirectory(prefix="cleancut-preview-") as directory:
+            clips = prepare_replacements(video, selected, read_srt(transcript), _speech_config(),
+                                         Path(directory), audio_index=track.index,
+                                         cache_dir=path.parent / "speech")
+        if not clips:
+            return _bad("Replacement unavailable: test the speech connection, or use a "
+                        "3–12 second single-speaker reference. The word will stay muted.")
+        return send_file(clips[0].path, mimetype="audio/wav", conditional=False)
+    except Exception as exc:
+        return _bad(f"Could not preview speech: {exc}")
 
 
 @app.route("/api/health")

@@ -158,6 +158,12 @@ class Config:
     quality: int = 20
     # none | quick (metadata/duration) | full (decode every output frame)
     render_validation: str = "quick"
+    # Speech is served by a local MLX companion, not Ollama's text API.
+    profanity_audio: str = "mute"  # mute | replace (experimental, mute fallback)
+    speech_host: str = "http://127.0.0.1:8765"
+    speech_model: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
+    speech_token: str = ""
+    speech_timeout: float = 120.0
 
     @classmethod
     def load_defaults(cls) -> Config:

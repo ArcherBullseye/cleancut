@@ -17,6 +17,10 @@ def _capture_run():
     calls: list[tuple[list[str], dict]] = []
 
     def fake_run(cmd, **kwargs):
+        if cmd[0] == "ffprobe":
+            # These command-construction fixtures are not real media. Keep
+            # probe behavior independent of whether FFprobe happens to be installed.
+            raise OSError("No probe metadata for a mocked render fixture")
         calls.append((cmd, kwargs))
 
         class R:

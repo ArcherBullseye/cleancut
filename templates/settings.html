@@ -53,6 +53,37 @@
     <div class="actions-grid" id="actions"></div>
   </div>
 
+  <div class="field">
+    <label for="profanity-audio">Audio for profanity marked “mute”</label>
+    <select id="profanity-audio">
+      <option value="mute">Mute the word (recommended until tested)</option>
+      <option value="replace">Replace using the actor's voice (experimental; mute fallback)</option>
+    </select>
+    <p class="muted small">Replacement only applies to precise profanity word timings.
+      Cuts still remove scenes. Other mutes stay muted. Preview the generated voice
+      on the scan review page before rendering. Existing renders do not change.</p>
+  </div>
+  <div class="field">
+    <label for="speech-host">Local speech service host</label>
+    <input type="text" id="speech-host" placeholder="http://192.168.1.20:8765">
+    <p class="muted small">Run <code>macos/install-speech.sh</code> and
+      <code>macos/run-speech.sh</code> on your AI Mac. Use the same Mac as Ollama,
+      but port <code>8765</code>, not <code>11434</code>. Only localhost/private
+      LAN addresses are accepted; no cloud APIs.</p>
+  </div>
+  <div class="field">
+    <label for="speech-model">Speech model</label>
+    <input type="text" id="speech-model">
+  </div>
+  <div class="field">
+    <label for="speech-token">Speech service shared token (required over LAN)</label>
+    <input type="password" id="speech-token" autocomplete="off">
+    <div class="row">
+      <button id="test-speech" class="ghost">Test speech connection</button>
+      <span id="speech-status" class="muted small"></span>
+    </div>
+  </div>
+
   <div class="two-up">
     <div class="field">
       <label for="encoder">Video encoder</label>
@@ -143,4 +174,4 @@
   <div id="health" class="mono small muted">Loading...</div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='settings.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='settings.js', v=version) }}"></script>{% endblock %}

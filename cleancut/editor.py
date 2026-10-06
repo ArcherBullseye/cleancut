@@ -10,6 +10,10 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cleancut.speech import SpeechClip
 
 
 # Re-export pure-arithmetic names from editor_ranges and the ffprobe wrapper
@@ -269,6 +273,7 @@ def apply_cuts(
     encoder: str = "libx264",
     quality: int = 20,
     validation: str = "none",
+    audio_index: int | None = None,
 ) -> None:
     """Re-encode `input_path` with `cuts` removed, writing to `output_path`."""
     _require_ffmpeg()
@@ -311,7 +316,8 @@ def apply_cuts(
         parts.append(
             f"[0:v]trim=start={seg.start:.3f}:end={seg.end:.3f},"
             f"setpts=PTS-STARTPTS[v{i}];"
-            f"[0:a]atrim=start={seg.start:.3f}:end={seg.end:.3f},"
+            f"[0:{audio_index if audio_index is not None else 'a'}]"
+            f"atrim=start={seg.start:.3f}:end={seg.end:.3f},"
             f"asetpts=PTS-STARTPTS[a{i}]"
         )
         concat_inputs.append(f"[v{i}][a{i}]")
@@ -361,6 +367,37 @@ def _ffmpeg_has_libass() -> bool:
         return False
 
 
+def _batch_speech_clips(clips: list[SpeechClip], directory: Path) -> list[SpeechClip]:
+    """Bound open WAV decoders on films with hundreds of profanity edits.
+
+    Each AAC bed starts at zero on the edited timeline. Batches are recursive
+    so even very long lists never exceed 24 input files in a single process.
+    The temporary beds contain only generated words, not the movie soundtrack.
+    """
+    from cleancut.speech import SpeechClip
+
+    if len(clips) <= 24:
+        return clips
+    beds = []
+    for offset in range(0, len(clips), 24):
+        group = clips[offset:offset + 24]
+        cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error"]
+        graph = []
+        for i, clip in enumerate(group):
+            cmd += ["-i", str(clip.path.resolve())]
+            graph.append(f"[{i}:a]atrim=duration={clip.end-clip.start:.8f},asetpts=PTS-STARTPTS,"
+                         f"adelay={round(clip.start*1000)}:all=1[s{i}]")
+        graph.append("".join(f"[s{i}]" for i in range(len(group)))
+                     + f"amix=inputs={len(group)}:duration=longest:"
+                       "dropout_transition=0:normalize=0[out]")
+        output = directory / f"bed-{len(clips)}-{offset}.m4a"
+        cmd += ["-filter_complex", ";".join(graph), "-map", "[out]", "-c:a", "aac",
+                "-b:a", "128k", str(output)]
+        subprocess.run(cmd, check=True)
+        beds.append(SpeechClip(0, max(clip.end for clip in group), output))
+    return _batch_speech_clips(beds, directory)
+
+
 def apply_mutes_and_subs(
     input_path: Path,
     mutes: list[Range],
@@ -370,6 +407,8 @@ def apply_mutes_and_subs(
     encoder: str = "libx264",
     quality: int = 20,
     validation: str = "none",
+    speech_clips: list[SpeechClip] | None = None,
+    audio_index: int | None = None,
 ) -> None:
     """Apply mute ranges via volume filter; add subtitles either as burn-in (libass)
     or as a soft subtitle track in the container (always works).
@@ -403,12 +442,30 @@ def apply_mutes_and_subs(
         )
     )
 
+    speech_dir = None
+    if speech_clips and len(speech_clips) > 24:
+        speech_dir = Path(tempfile.mkdtemp(prefix="cleancut-speech-beds_"))
+        try:
+            speech_clips = _batch_speech_clips(speech_clips, speech_dir)
+        except Exception as exc:  # noqa: BLE001 -- an optional voice bed must not break censorship.
+            print(f"[cleancut] Speech batching failed: {exc}; using word mutes.", flush=True)
+            speech_clips = []
+            shutil.rmtree(speech_dir, ignore_errors=True)
+            speech_dir = None
+        except BaseException:
+            shutil.rmtree(speech_dir, ignore_errors=True)
+            raise
+
     cmd: list[str] = ["ffmpeg", "-y", "-i", str(input_path)]
 
     # If soft-subs mode, add the SRT as a second input.
     has_soft_subs = srt_path and srt_path.exists() and not can_burn
     if has_soft_subs:
         cmd += ["-i", str(srt_path)]
+    speech_clips = speech_clips or []
+    first_speech_input = 2 if has_soft_subs else 1
+    for clip in speech_clips:
+        cmd += ["-i", str(clip.path.resolve())]
 
     # Audio filter: mute volumes in the given ranges. The layout pin goes last
     # in the chain and is always present — the encoder needs it whether or not
@@ -418,7 +475,30 @@ def apply_mutes_and_subs(
         enable = "+".join(f"between(t,{r.start:.3f},{r.end:.3f})" for r in mutes)
         af_parts.append(f"volume=enable='{enable}':volume=0")
     af_parts.append(KNOWN_LAYOUTS)
-    cmd += ["-af", ",".join(af_parts)]
+    if speech_clips:
+        # Mix AFTER censoring: the original word remains inaudible even if a
+        # generated clip is quieter. Original film duration controls the mix.
+        selected_audio = f"0:{audio_index}" if audio_index is not None else "0:a:0"
+        parts = [f"[{selected_audio}]{','.join(af_parts)}[muted]"]
+        labels = ["[muted]"]
+        for i, clip in enumerate(speech_clips):
+            label = f"speech{i}"
+            parts.append(
+                f"[{first_speech_input+i}:a]atrim=duration={clip.end-clip.start:.8f},"
+                f"asetpts=PTS-STARTPTS,adelay={round(clip.start*1000)}:all=1[{label}]"
+            )
+            labels.append(f"[{label}]")
+        parts.append(''.join(labels) + f"amix=inputs={len(labels)}:duration=first:"
+                     "dropout_transition=0:normalize=0[speechmix]")
+        cmd += ["-filter_complex", ";".join(parts), "-map", "0:v:0", "-map", "[speechmix]"]
+        if has_soft_subs:
+            cmd += ["-map", "1:0"]
+    else:
+        cmd += ["-af", ",".join(af_parts)]
+        if audio_index is not None:
+            cmd += ["-map", "0:v:0", "-map", f"0:{audio_index}"]
+            if has_soft_subs:
+                cmd += ["-map", "1:0"]
 
     safe_dir: Path | None = None
     if can_burn:
@@ -434,7 +514,8 @@ def apply_mutes_and_subs(
             # Stream-copy video, encode subs into the container. mov_text is
             # MP4-family only; Matroska (and most others) take srt.
             sub_codec = "mov_text" if output_path.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
-            cmd += ["-map", "0:v", "-map", "0:a", "-map", "1:0"]
+            if not speech_clips and audio_index is None:
+                cmd += ["-map", "0:v", "-map", "0:a", "-map", "1:0"]
             if copy_video:
                 cmd += ["-c:v", "copy"]
             else:
@@ -457,15 +538,24 @@ def apply_mutes_and_subs(
             str(partial),
         ]
         cwd = str(safe_dir) if can_burn else None
-        _run_with_encoder_fallback(
-            cmd,
-            encoder=encoder,
-            encoder_args=encoder_args,
-            source=source_stream,
-            quality=quality,
-            partial=partial,
-            cwd=cwd,
-        )
+        try:
+            _run_with_encoder_fallback(
+                cmd,
+                encoder=encoder,
+                encoder_args=encoder_args,
+                source=source_stream,
+                quality=quality,
+                partial=partial,
+                cwd=cwd,
+            )
+        except subprocess.CalledProcessError:
+            if not speech_clips:
+                raise
+            print("[cleancut] Speech mix failed; retrying with word-only mutes.", flush=True)
+            apply_mutes_and_subs(input_path, mutes, srt_path, output_path,
+                                 burn_subs=burn_subs, encoder=encoder, quality=quality,
+                                 validation=validation, audio_index=audio_index)
+            return
         _finish_atomic_output(
             partial, output_path,
             expected_duration=(probe_duration(input_path) if validation != "none" else None),
@@ -476,3 +566,5 @@ def apply_mutes_and_subs(
         partial.unlink(missing_ok=True)
         if safe_dir is not None:
             shutil.rmtree(safe_dir, ignore_errors=True)
+        if speech_dir is not None:
+            shutil.rmtree(speech_dir, ignore_errors=True)

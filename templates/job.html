@@ -72,4 +72,4 @@
   <div id="decisions" class="decisions"></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='job.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='job.js', v=version) }}"></script>{% endblock %}

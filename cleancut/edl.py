@@ -20,6 +20,9 @@ class EditDecision:
     text_after: str = ""    # softened subtitle text (if dialogue-based)
     source: str = ""        # "subtitle" | "whisper" | "visual"
     accepted: bool = True   # GUI review state
+    # Unpadded word intervals survive merging, padding, and browser review.
+    # Old EDLs have none and safely remain mute-only until scanned again.
+    word_edits: list[dict] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -84,10 +87,15 @@ class EditDecisionList:
     def pad(self, seconds: float) -> EditDecisionList:
         out = []
         for d in self.decisions:
+            # Word-timed mutes need only a short boundary guard, not scene
+            # padding that can silence the next/previous spoken word.
+            padding = min(seconds, 0.04) if (
+                d.action == "mute" and d.source == "whisper-word" and d.word_edits
+            ) else seconds
             out.append(
                 EditDecision(
-                    start=max(0.0, d.start - seconds),
-                    end=d.end + seconds,
+                    start=max(0.0, d.start - padding),
+                    end=d.end + padding,
                     action=d.action,
                     category=d.category,
                     reason=d.reason,
@@ -95,6 +103,7 @@ class EditDecisionList:
                     text_after=d.text_after,
                     source=d.source,
                     accepted=d.accepted,
+                    word_edits=d.word_edits,
                 )
             )
         return EditDecisionList(decisions=out, video_path=self.video_path, subtitle_path=self.subtitle_path)
@@ -110,7 +119,10 @@ class EditDecisionList:
         merged: list[EditDecision] = [replace(items[0])]
         for d in items[1:]:
             last = merged[-1]
-            if d.start <= last.end + gap:
+            word_mutes = (d.action == last.action == "mute"
+                          and d.source == last.source == "whisper-word"
+                          and d.word_edits and last.word_edits)
+            if d.start <= last.end + (0.0 if word_mutes else gap):
                 # Overlap or near-touching: merge.
                 new_action = last.action if ranked[last.action] >= ranked[d.action] else d.action
                 last.end = max(last.end, d.end)
@@ -122,6 +134,7 @@ class EditDecisionList:
                     last.reason = f"{last.reason}; {d.reason}".strip("; ")
                 if d.source and d.source not in last.source:
                     last.source = f"{last.source}+{d.source}"
+                last.word_edits = [*last.word_edits, *d.word_edits]
             else:
                 merged.append(replace(d))
         return EditDecisionList(
@@ -180,6 +193,7 @@ def snap_edl_to_shots(edl: EditDecisionList, shots: list["Shot"]) -> EditDecisio
                     text_after=d.text_after,
                     source=d.source,
                     accepted=d.accepted,
+                    word_edits=d.word_edits,
                 )
             )
         else:

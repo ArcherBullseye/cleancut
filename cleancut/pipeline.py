@@ -465,6 +465,23 @@ def render(
         encoder = config.resolved_encoder(opts.video)
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
 
+        speech_clips = []
+        audio_index = None
+        if config.profanity_audio == "replace":
+            from cleancut.probe import pick_audio_track, probe_streams
+            from cleancut.speech import prepare_replacements
+
+            # References, censored dialogue and output must use the same track.
+            track = pick_audio_track(probe_streams(opts.video), opts.audio_track,
+                                     prefer_language=opts.prefer_language)
+            if track is not None:
+                audio_index = track.index
+                speech_clips = prepare_replacements(
+                    opts.video, edl, subs, config, work / "speech",
+                    audio_index=audio_index,
+                    cache_dir=opts.edl_in.parent / "speech" if opts.edl_in else None,
+                )
+
         # Step 1: apply cuts (re-encode if needed).
         if cuts:
             cut_path = work / f"{opts.video.stem}.cut.mp4"
@@ -472,7 +489,10 @@ def render(
             apply_cuts(
                 opts.video, cuts, cut_path, encoder=encoder, quality=config.quality,
                 validation="quick",
+                **({"audio_index": audio_index} if audio_index is not None else {}),
             )
+            if audio_index is not None:
+                audio_index = 1  # apply_cuts writes one video followed by one audio track.
             mutes = shift_ranges_after_cuts(mutes, cuts)
             subs = adjust_subtitles_for_cuts(subs, cuts)
         else:
@@ -499,6 +519,8 @@ def render(
             encoder=encoder,
             quality=config.quality,
             validation=config.render_validation,
+            **({"speech_clips": speech_clips, "audio_index": audio_index}
+               if config.profanity_audio == "replace" else {}),
         )
     finally:
         # Intermediates (e.g. the movie-sized .cut.mp4) would otherwise leak
@@ -519,7 +541,7 @@ def run_full(opts: PipelineOptions, config: Config) -> tuple[Path, EditDecisionL
         # Subtitles are only needed to burn them in — don't trigger a
         # potential Whisper run for subs that would never be used.
         subs = []
-        if opts.burn_subs:
+        if opts.burn_subs or opts.soft_subs or config.profanity_audio == "replace":
             subs, _ = _get_subtitles_and_words(opts, config)
     else:
         edl, subs = build_edl(opts, config)

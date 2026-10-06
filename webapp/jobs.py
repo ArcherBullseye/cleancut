@@ -54,6 +54,8 @@ _STAGE_MARKERS: list[tuple[str, str]] = [
     ("Applying", "Applying cuts"),
     ("Muting", "Muting and subtitles"),
     ("Encoder", "Encoding"),
+    ("Generating replacement", "Generating replacement speech"),
+    ("Voice replacement", "Preparing replacement speech"),
     ("Wrote report", "Writing report"),
 ]
 
@@ -356,6 +358,12 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
         "--verify-render", opts.get("render_validation") or "quick",
         "--prefer-language", opts.get("prefer_language") or "eng",
     ]
+    if opts.get("profanity_audio") == "replace":
+        cmd += ["--profanity-audio", "replace", "--speech-host",
+                opts.get("speech_host") or "http://127.0.0.1:8765", "--speech-model",
+                opts.get("speech_model") or "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+    if opts.get("audio_track") not in (None, ""):
+        cmd += ["--audio-track", str(opts["audio_track"])]
     # Reuse the scan's transcript. Without it, `clean` re-runs Whisper purely to
     # have subtitles to soften -- hours of work already done.
     subs = opts.get("subs_path") or ""
@@ -382,6 +390,8 @@ def _child_env() -> dict[str, str]:
     """
     env = dict(os.environ)
     env.update({
+        # Keep shared credentials out of command-line arguments and job logs.
+        "CLEANCUT_SPEECH_TOKEN": settings_store.load().get("speech_token", ""),
         "CLEANCUT_CACHE_DIR": str(CACHE_DIR / "cleancut"),
         "XDG_CACHE_HOME": str(CACHE_DIR),
         "HF_HOME": str(MODELS_DIR / "huggingface"),
@@ -587,6 +597,10 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
         "subtitle_mode": cfg.get("subtitle_mode", "soft"),
         "prefer_language": opts.get("prefer_language", "eng"),
         "subs_path": str(transcript) if transcript.exists() else "",
+        "profanity_audio": cfg.get("profanity_audio", "mute"),
+        "speech_host": cfg.get("speech_host", "http://127.0.0.1:8765"),
+        "speech_model": cfg.get("speech_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"),
+        "audio_track": opts.get("audio_track"),
     }
     render_opts.update(overrides or {})
     return create_job(

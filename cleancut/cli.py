@@ -43,6 +43,9 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("encoder", "encoder"),
     ("quality", "quality"),
     ("verify_render", "render_validation"),
+    ("profanity_audio", "profanity_audio"),
+    ("speech_host", "speech_host"),
+    ("speech_model", "speech_model"),
     ("density", "density_enabled"),
     ("density_window", "density_window_seconds"),
     ("density_min_events", "density_min_events"),
@@ -224,6 +227,11 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--audio-track", type=int, default=None,
                    help="0-indexed audio track to transcribe (audio:0, audio:1, …). Default: prefer English.")
+    p.add_argument("--profanity-audio", choices=["mute", "replace"], default=None,
+                   help="Experimental local voice replacement for word-precise profanity mutes.")
+    p.add_argument("--speech-host", default=None,
+                   help="Local/LAN CleanCut speech service URL (not Ollama's port).")
+    p.add_argument("--speech-model", default=None, help="Speech model ID hosted by the companion.")
     p.add_argument("--prefer-language", default="eng",
                    help="ISO-639 language code to prefer for subs and audio (default: eng).")
     p.add_argument("--save-transcript", default=None,

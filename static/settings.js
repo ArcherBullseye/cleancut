@@ -25,6 +25,10 @@ async function load() {
   updateOutputFolderState();
   document.getElementById("subtitle-mode").value = settings.subtitle_mode;
   document.getElementById("auto-render").checked = !!settings.auto_render;
+  document.getElementById("profanity-audio").value = settings.profanity_audio;
+  document.getElementById("speech-host").value = settings.speech_host;
+  document.getElementById("speech-model").value = settings.speech_model;
+  document.getElementById("speech-token").value = settings.speech_token;
   renderCategoryChips(document.getElementById("categories"), settings.categories);
   renderActionGrid(document.getElementById("actions"), settings.actions);
 
@@ -53,6 +57,10 @@ document.getElementById("save").addEventListener("click", async () => {
     output_location: document.getElementById("output-location").value,
     subtitle_mode: document.getElementById("subtitle-mode").value,
     auto_render: document.getElementById("auto-render").checked,
+    profanity_audio: document.getElementById("profanity-audio").value,
+    speech_host: document.getElementById("speech-host").value.trim(),
+    speech_model: document.getElementById("speech-model").value.trim(),
+    speech_token: document.getElementById("speech-token").value.trim(),
     categories: readCategoryChips(document.getElementById("categories")),
     actions: readActionGrid(document.getElementById("actions")),
   };
@@ -75,6 +83,19 @@ document.getElementById("test-ollama").addEventListener("click", async () => {
   status.textContent = res.ok
     ? `Connected. Models: ${res.models.join(", ") || "none pulled yet"}`
     : `Not reachable: ${res.reason}`;
+});
+
+document.getElementById("test-speech").addEventListener("click", async () => {
+  const status = document.getElementById("speech-status");
+  status.textContent = "Checking...";
+  try {
+    const result = await post("/api/speech", {
+      speech_host: document.getElementById("speech-host").value.trim(),
+      speech_model: document.getElementById("speech-model").value.trim(),
+      speech_token: document.getElementById("speech-token").value.trim(),
+    });
+    status.textContent = result.ok ? `Ready: ${result.model}` : result.reason;
+  } catch (e) { status.textContent = e.message; }
 });
 
 load();

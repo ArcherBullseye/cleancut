@@ -143,6 +143,17 @@ function decisionCard(decision) {
       decision.text_after ? document.createTextNode("  →  ") : null,
       decision.text_after ? el("span", { text: decision.text_after }) : null,
     ].filter(Boolean)));
+    quote.push(el("p", { class: "muted small", text:
+      "Arrow shows the softened subtitle. Spoken replacement is separate and experimental." }));
+  }
+  const speechControls = [];
+  if (decision.action === "mute" && accepted &&
+      (decision.word_edits || []).some(w => w.category === "profanity" &&
+        w.text_before.toLowerCase() !== w.text_after.toLowerCase())) {
+    speechControls.push(el("button", {
+      class: "ghost", text: "Preview first voice replacement",
+      onclick: (e) => showSpeech(card, decision, e.target),
+    }));
   }
 
   const body = el("div", { class: "body" }, [
@@ -158,6 +169,7 @@ function decisionCard(decision) {
     el("div", { class: "controls" }, [
       toggle,
       actionSelect,
+      ...speechControls,
       el("button", {
         class: "ghost", text: "Preview clip",
         onclick: (e) => showClip(card, decision, e.target),
@@ -173,6 +185,27 @@ function decisionCard(decision) {
   card.appendChild(thumb);
   card.appendChild(body);
   return card;
+}
+
+async function showSpeech(card, decision, button) {
+  button.disabled = true;
+  button.textContent = "Generating voice...";
+  try {
+    const response = await fetch(`/api/job/${JOB_ID}/speech/${decision.index}`, { method: "POST" });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Could not generate speech");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const audio = el("audio", { controls: "", src: url });
+    card.querySelector(".body").appendChild(audio);
+    audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+    await audio.play();
+  } catch (e) { toast(e.message, true); }
+  finally {
+    button.disabled = false;
+    button.textContent = "Preview first voice replacement";
+  }
 }
 
 function showClip(card, decision, button) {

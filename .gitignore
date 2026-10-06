@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .venv-macos/
+.venv-speech/
 # Anchored to the repo root: an unanchored `data/` also matches
 # cleancut/data/, which holds the wordlists the detector needs.
 /data/
