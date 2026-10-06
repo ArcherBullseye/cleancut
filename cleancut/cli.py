@@ -96,8 +96,10 @@ def _apply_common(args: argparse.Namespace, config: "Config") -> None:
             raise SystemExit(
                 f"unknown category {cat!r}; choose from {'|'.join(CATEGORIES)}"
             )
-        if action not in ("mute", "cut", "keep"):
-            raise SystemExit(f"action must be mute|cut|keep, got {action!r}")
+        if action not in ("mute", "replace", "cut", "keep"):
+            raise SystemExit(f"action must be mute|replace|cut|keep, got {action!r}")
+        if action == "replace" and cat != "profanity":
+            raise SystemExit("replace is only supported for profanity words")
         config.actions[cat] = action  # type: ignore[assignment]
     if args.no_word_timestamps:
         config.whisper_word_timestamps = False

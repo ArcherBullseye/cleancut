@@ -20,7 +20,10 @@ rather than the entire subtitle sentence.
 The Mac beta also offers optional local Qwen3-TTS actor-voice replacements
 for profanity, with audio previews and word-only mute fallback. Host the MLX
 speech companion alongside Ollama on the AI Mac (separate port 8765), then
-enable it in Settings. See the [speech setup](MACOS.md#optional-actor-voice-profanity-replacement-beta7).
+select **Replace** in the job's profanity dropdown. Scan choices are remembered
+for future jobs; each job retains its own actions. See the
+[speech setup](MACOS.md#optional-actor-voice-profanity-replacement-beta7) and
+[job-specific actions](MACOS.md#job-specific-actions-beta10).
 The Mac beta can also optionally preserve estimated music/effects during word
 mutes using local Demucs separation and a Whisper speech-leak check. It works
 with mute or voice replacement, includes a mixed-audio preview, and retains a

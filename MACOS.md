@@ -160,9 +160,9 @@ after each request; only fitted replacement WAVs are cached with the job.
 In CleanCut on the video-processing Mac:
 
 1. Pull the same branch and restart `macos/run.sh` (or the Start command).
-2. In **Settings**, leave the profanity category action set to **mute** and
-   set **Audio for profanity marked “mute”** to **Replace using the actor's
-   voice**. Cuts still remove scenes; other categories remain mute-only.
+2. When starting a job, select **Replace** in the profanity action dropdown.
+   You can also change individual profanity decisions to **Replace** during
+   review. **Mute** stays mute-only; **Cut** still removes scenes.
 3. Set **Local speech service host** to the AI Mac's LAN address or `.local`
    hostname, with port **8765**. Use `http://127.0.0.1:8765` only if both
    services are on the same Mac. Set the shared token for LAN access.
@@ -173,7 +173,7 @@ In CleanCut on the video-processing Mac:
    its first eligible word. Previewed WAVs are reused in the render rather
    than randomly regenerated. Render settings apply when a render is queued.
 
-Only accepted, word-timed profanity **mutes** with an actual softened word
+Only accepted, word-timed profanity **Replace** decisions with an actual softened word
 are eligible. Words intersecting a cut or a manually shortened decision are
 skipped. The service clones a containing 3–12 second utterance, so very short
 subtitle lines and explicitly marked multi-speaker lines fall back to mute.
@@ -223,6 +223,26 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Job-specific actions (beta.10)
+
+The scan form and individual review decisions now offer **Replace** for
+profanity, alongside **Cut**, **Mute**, and **Keep**. Replacement is not a
+global render setting: one job can contain both ordinary mutes and actor-voice
+replacements. Missing word timings, unsuitable references, or an unavailable
+speech service retain a full mute. No new model is required for this change.
+
+Starting a scan saves the preset, categories, per-category actions, language,
+visual/local-AI options, and auto-render choice as defaults for the next scan.
+They survive browser refreshes and app restarts. Every queued job keeps its own
+snapshot; later scans and settings changes do not rewrite existing decisions.
+Individual review changes affect only that job, not the next job's defaults.
+
+The retired global replacement setting migrates to **Replace** as the next
+job's profanity default. Existing scans with **Mute** decisions stay muted;
+choose **Replace** in their review dropdowns and re-render the original movie.
+Already-rendered files are unchanged. The speech service connection and the
+optional background-preservation setting remain in Settings.
+
 ## Background-preserving word edits (beta.9)
 
 This optional mode estimates voice and background separately around reviewed
@@ -250,16 +270,15 @@ checksum-verified. Inference loads explicit local checkpoints, never a cloud
 API or a remotely resolved model. No separate server or Ollama model is needed.
 
 In **Settings**, enable **Preserve background during word mutes**, click
-**Test separation installation**, then **Save**. Keep the category action
-**Mute**. Choose either ordinary mute or actor-voice replacement in the separate
-profanity audio setting. On the scan review page, use **Preview
+**Test separation installation**, then **Save**. Choose **Mute** or **Replace**
+in the job's profanity dropdown. On the scan review page, use **Preview
 background-preserving mix**: it plays the edited word with two seconds of
 surrounding audio and, if enabled, generated replacement speech. Then re-render
 the original movie. Previewed background clips are cached and reused in renders.
 Old scans without word-edit metadata need rescanning; beta.7+ word-timed scans
 do not need rescanning merely to enable this feature.
 
-Only accepted, precise word mutes qualify. Broad scene/audio-event mutes, edits
+Only accepted, precise word mutes/replacements qualify. Broad scene/audio-event mutes, edits
 overlapping another mute, and words intersecting cuts remain full-mix mutes.
 Nearby words share bounded windows (at most 16 seconds); the separator never
 loads the complete film soundtrack into memory. Mono/stereo and standard

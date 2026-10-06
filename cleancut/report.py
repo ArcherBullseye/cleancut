@@ -179,6 +179,7 @@ def build_results_report(
 
     n_mute = sum(1 for d in decisions if d.action == "mute")
     n_cut = sum(1 for d in decisions if d.action == "cut")
+    n_replace = sum(1 for d in decisions if d.action == "replace")
     t_mute = sum(d.duration for d in decisions if d.action == "mute")
     t_cut = sum(d.duration for d in decisions if d.action == "cut")
 
@@ -187,6 +188,8 @@ def build_results_report(
     lines.append(f"  Total decisions: {len(decisions)}")
     lines.append(f"  Mutes:           {n_mute}  ({_fmt_duration(t_mute)} of audio)")
     lines.append(f"  Cuts:            {n_cut}  ({_fmt_duration(t_cut)} of video)")
+    if n_replace:
+        lines.append(f"  Replacements:    {n_replace}  (voice generation attempted; mute fallback)")
     if original_duration:
         new_dur = max(0.0, original_duration - t_cut)
         pct = (t_cut / original_duration * 100) if original_duration > 0 else 0.0

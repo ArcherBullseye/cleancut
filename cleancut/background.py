@@ -68,7 +68,7 @@ def eligible_mutes(edl: EditDecisionList, cuts: list[Range]) -> list[Range]:
     Restoring a background inside another censor could undermine that censor,
     so overlapping decisions and anything intersecting a cut are left muted.
     """
-    decisions = edl.by_action("mute")
+    decisions = edl.audio_edits()
     out = []
     for d in decisions:
         if (not d.word_edits or d.source != "whisper-word"

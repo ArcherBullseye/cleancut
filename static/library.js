@@ -12,6 +12,8 @@ async function loadSettings() {
   document.getElementById("prefer-language").value = currentSettings.prefer_language;
   document.getElementById("auto-render").checked = !!currentSettings.auto_render;
   document.getElementById("use-local-ai").checked = !!currentSettings.local_ai_enabled;
+  document.getElementById("use-visual").checked = !!currentSettings.use_visual;
+  document.getElementById("allow-solo-visual").checked = !!currentSettings.allow_solo_visual;
 }
 
 function renderListing(data) {

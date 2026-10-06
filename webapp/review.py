@@ -16,7 +16,7 @@ from typing import Any
 from webapp.paths import job_dir
 
 CATEGORIES = ("profanity", "drugs", "sex", "violence", "nudity")
-ACTIONS = ("mute", "cut", "keep")
+ACTIONS = ("mute", "replace", "cut", "keep")
 
 # A preview is for judging one decision, not for watching the film.
 MAX_CLIP_SECONDS = 40.0
@@ -94,14 +94,17 @@ def summarize(data: dict[str, Any]) -> dict[str, Any]:
         by_source[src] = by_source.get(src, 0) + 1
     cuts = [d for d in accepted if d.get("action") == "cut"]
     mutes = [d for d in accepted if d.get("action") == "mute"]
+    replacements = [d for d in accepted if d.get("action") == "replace"]
     return {
         "total": len(decisions),
         "accepted": len(accepted),
         "rejected": len(decisions) - len(accepted),
         "cuts": len(cuts),
         "mutes": len(mutes),
+        "replacements": len(replacements),
         "seconds_cut": round(sum(d["end"] - d["start"] for d in cuts), 1),
         "seconds_muted": round(sum(d["end"] - d["start"] for d in mutes), 1),
+        "seconds_replaced": round(sum(d["end"] - d["start"] for d in replacements), 1),
         "by_category": by_category,
         "by_source": by_source,
     }
@@ -112,6 +115,8 @@ def apply_edit(data: dict[str, Any], index: int, changes: dict[str, Any]) -> dic
     if not 0 <= index < len(decisions):
         raise IndexError(f"no decision at index {index}")
     decision = decisions[index]
+    if changes.get("action") == "replace" and "profanity" not in str(decision.get("category", "")).split("+"):
+        raise ValueError("Replace is only supported for profanity words.")
     if "accepted" in changes:
         decision["accepted"] = bool(changes["accepted"])
     if changes.get("action") in ACTIONS:
@@ -134,6 +139,8 @@ def add_decision(
         raise ValueError(f"unknown category {category!r}")
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action!r}")
+    if action == "replace" and category != "profanity":
+        raise ValueError("Replace is only supported for profanity words.")
     decision = {
         "start": float(start), "end": float(end), "action": action, "category": category,
         "reason": f"manual: {reason}" if reason else "manual",

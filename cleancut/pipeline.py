@@ -465,14 +465,15 @@ def render(
         cuts = edl_to_ranges(edl, "cut")
         if cuts:
             cuts = normalize_cuts(cuts, probe_duration(opts.video))
-        mutes = edl_to_ranges(edl, "mute")
+        mutes = [*edl_to_ranges(edl, "mute"), *edl_to_ranges(edl, "replace")]
+        replace_audio = config.profanity_audio == "replace" or bool(edl.by_action("replace"))
         encoder = config.resolved_encoder(opts.video)
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
 
         speech_clips = []
         background_clips = []
         audio_index = None
-        if config.profanity_audio == "replace" or config.preserve_background:
+        if replace_audio or config.preserve_background:
             from cleancut.probe import pick_audio_track, probe_streams
 
             # References, censored dialogue and output must use the same track.
@@ -488,7 +489,7 @@ def render(
                         channels=track.channels or 2, cuts=cuts, language=opts.prefer_language,
                         cache_dir=opts.edl_in.parent / "background" if opts.edl_in else None,
                     )
-                if config.profanity_audio == "replace":
+                if replace_audio:
                     from cleancut.speech import prepare_replacements
 
                     speech_clips = prepare_replacements(
@@ -536,7 +537,7 @@ def render(
             quality=config.quality,
             validation=config.render_validation,
             **({"speech_clips": [*background_clips, *speech_clips], "audio_index": audio_index}
-               if config.profanity_audio == "replace" or config.preserve_background else {}),
+               if replace_audio or config.preserve_background else {}),
         )
     finally:
         # Intermediates (e.g. the movie-sized .cut.mp4) would otherwise leak
@@ -557,7 +558,7 @@ def run_full(opts: PipelineOptions, config: Config) -> tuple[Path, EditDecisionL
         # Subtitles are only needed to burn them in — don't trigger a
         # potential Whisper run for subs that would never be used.
         subs = []
-        if opts.burn_subs or opts.soft_subs or config.profanity_audio == "replace":
+        if opts.burn_subs or opts.soft_subs or config.profanity_audio == "replace" or edl.by_action("replace"):
             subs, _ = _get_subtitles_and_words(opts, config)
     else:
         edl, subs = build_edl(opts, config)

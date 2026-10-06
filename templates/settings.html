@@ -48,21 +48,9 @@
     <div class="chips" id="categories"></div>
   </div>
 
-  <div class="field">
-    <label>Default action per category</label>
-    <div class="actions-grid" id="actions"></div>
-  </div>
-
-  <div class="field">
-    <label for="profanity-audio">Audio for profanity marked “mute”</label>
-    <select id="profanity-audio">
-      <option value="mute">Mute the word (recommended until tested)</option>
-      <option value="replace">Replace using the actor's voice (experimental; mute fallback)</option>
-    </select>
-    <p class="muted small">Replacement only applies to precise profanity word timings.
-      Cuts still remove scenes. Other mutes stay muted. Preview the generated voice
-      on the scan review page before rendering. Existing renders do not change.</p>
-  </div>
+  <p class="muted small">Choose Cut, Mute, Replace or Keep when starting each job.
+    Your last scan selections are remembered for new jobs. Replace uses the
+    local speech service below for word-timed profanity; failures stay muted.</p>
   <div class="field">
     <label class="check"><input type="checkbox" id="preserve-background"> Preserve background during word mutes (experimental)</label>
     <p class="muted small">Locally separate short passages into voice and background,

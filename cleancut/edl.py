@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class EditDecision:
     start: float            # seconds
     end: float              # seconds
-    action: str             # "mute" | "cut" | "keep"
+    action: str             # "mute" | "replace" | "cut" | "keep"
     category: str           # "profanity" | "drugs" | "sex" | "violence" | "nudity"
     reason: str = ""        # short human-readable why
     text_before: str = ""   # original subtitle text (if dialogue-based)
@@ -33,7 +33,7 @@ class EditDecision:
 # the user configures an action per base category. The strongest action any
 # component asks for wins, so a scene that is both keep-violence and cut-sex is
 # still cut, and one that is only keep-violence is dropped.
-_ACTION_STRENGTH = {"keep": 0, "mute": 1, "cut": 2}
+_ACTION_STRENGTH = {"keep": 0, "replace": 1, "mute": 2, "cut": 3}
 
 
 def resolve_action(
@@ -84,13 +84,17 @@ class EditDecisionList:
     def by_action(self, action: str) -> list[EditDecision]:
         return [d for d in self.decisions if d.action == action and d.accepted]
 
+    def audio_edits(self) -> list[EditDecision]:
+        """Both actions remove original speech; replacement overlays are optional."""
+        return [d for d in self.decisions if d.action in {"mute", "replace"} and d.accepted]
+
     def pad(self, seconds: float) -> EditDecisionList:
         out = []
         for d in self.decisions:
             # Word-timed mutes need only a short boundary guard, not scene
             # padding that can silence the next/previous spoken word.
             padding = min(seconds, 0.04) if (
-                d.action == "mute" and d.source == "whisper-word" and d.word_edits
+                d.action in {"mute", "replace"} and d.source == "whisper-word" and d.word_edits
             ) else seconds
             out.append(
                 EditDecision(
@@ -112,17 +116,22 @@ class EditDecisionList:
         """Merge adjacent decisions of the same action. 'cut' wins over 'mute'."""
         if not self.decisions:
             return EditDecisionList(video_path=self.video_path, subtitle_path=self.subtitle_path)
-        ranked = {"keep": 0, "mute": 1, "cut": 2}
+        ranked = _ACTION_STRENGTH
         items = sorted(self.decisions, key=lambda d: d.start)
         # Copy before extending in place — callers' decision objects (e.g. ones
         # loaded from an EDL file) must not be silently modified.
         merged: list[EditDecision] = [replace(items[0])]
         for d in items[1:]:
             last = merged[-1]
-            word_mutes = (d.action == last.action == "mute"
+            word_mutes = (d.action in {"mute", "replace"} and last.action in {"mute", "replace"}
                           and d.source == last.source == "whisper-word"
                           and d.word_edits and last.word_edits)
-            if d.start <= last.end + (0.0 if word_mutes else gap):
+            # Never merge adjacent, differently chosen audio actions. A true
+            # overlap still resolves conservatively (mute wins over replace).
+            different_audio = {d.action, last.action} == {"mute", "replace"}
+            merge_gap = 0.0 if word_mutes or different_audio else gap
+            overlaps = d.start < last.end if different_audio else d.start <= last.end + merge_gap
+            if overlaps:
                 # Overlap or near-touching: merge.
                 new_action = last.action if ranked[last.action] >= ranked[d.action] else d.action
                 last.end = max(last.end, d.end)

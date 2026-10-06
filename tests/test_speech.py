@@ -249,7 +249,8 @@ def test_real_word_fit_rejects_excessive_stretch_and_keeps_exact_duration(tmp_pa
         _fit_clip(raw, fitted, .1)
 
 
-def test_real_render_selects_english_track_fits_word_and_shifts_past_cut(tmp_path, ffmpeg_available):
+@pytest.mark.parametrize("explicit_action", [False, True])
+def test_real_render_selects_english_track_fits_word_and_shifts_past_cut(tmp_path, ffmpeg_available, explicit_action):
     from cleancut.pipeline import PipelineOptions, render
     from cleancut.probe import audio_streams, probe_duration, probe_streams
 
@@ -261,9 +262,11 @@ def test_real_render_selects_english_track_fits_word_and_shifts_past_cut(tmp_pat
         "-map", "0:v", "-map", "1:a", "-map", "2:a", "-metadata:s:a:0", "language=fra",
         "-metadata:s:a:1", "language=eng", "-c:v", "libx264", "-c:a", "aac", str(video),
     ], check=True)
-    cfg = Config(profanity_audio="replace", encoder="libx264", render_validation="full")
+    cfg = Config(profanity_audio="mute" if explicit_action else "replace", encoder="libx264", render_validation="full")
     cut = EditDecision(.5, 1.5, "cut", "nudity")
-    edl = EditDecisionList(decisions=[cut, word_decision()])
+    edl = EditDecisionList(decisions=[cut, word_decision(action="replace" if explicit_action else "mute")])
+    if explicit_action:
+        edl.add(word_decision(4.2, 4.8))  # this ordinary Mute must never synthesize
     subs = [Subtitle(1, 0, 4, "That was a damn good idea.")]
     out = tmp_path / "out.mp4"
     received = []
@@ -280,6 +283,7 @@ def test_real_render_selects_english_track_fits_word_and_shifts_past_cut(tmp_pat
          patch("cleancut.speech._request", side_effect=request):
         render(edl, subs, PipelineOptions(video=video, output=out, burn_subs=False), cfg)
     assert received[0]["input"] == "darn"
+    assert len(received) == 1
     assert abs(probe_duration(out) - 5) < .15
     assert len(audio_streams(probe_streams(out))) == 1
     assert out.exists()
@@ -296,6 +300,12 @@ def test_real_render_selects_english_track_fits_word_and_shifts_past_cut(tmp_pat
         return np.argmax(spectrum) * 24000 / len(samples)
     assert abs(dominant_at(1.35) - 1000) < 20
     assert abs(dominant_at(3) - 440) < 20
+    if explicit_action:
+        import numpy as np
+
+        muted = subprocess.check_output(["ffmpeg", "-v", "error", "-ss", "3.3", "-i", str(out),
+            "-t", "0.15", "-ac", "1", "-ar", "24000", "-f", "s16le", "-"])
+        assert np.sqrt(np.mean(np.frombuffer(muted, dtype="<i2").astype(float)**2)) < 20
 
 
 def test_mix_command_keeps_video_copy_and_handles_soft_subtitle_input(tmp_path):

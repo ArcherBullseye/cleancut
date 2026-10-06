@@ -293,7 +293,7 @@ def test_real_mix_preserves_background_and_channel_count_after_cut(tmp_path, rea
         "-c:v", "libx264", "-c:a", "pcm_s16le", str(source)], check=True)
     word = tmp_path / "speech.wav"
     word.write_bytes(pcm(.4, 1, 1000))
-    edl = EditDecisionList(decisions=[EditDecision(.5, 1.5, "cut", "nudity"), decision()])
+    edl = EditDecisionList(decisions=[EditDecision(.5, 1.5, "cut", "nudity"), decision(action="replace" if replace else "mute")])
     output = tmp_path / "out.mp4"
     actual_run = subprocess.run
 
@@ -306,7 +306,7 @@ def test_real_mix_preserves_background_and_channel_count_after_cut(tmp_path, rea
                 Path(target["output"]).write_bytes(pcm(target["end"]-target["start"], channels, 200))
         return SimpleNamespace(returncode=0)
 
-    cfg = Config(preserve_background=True, profanity_audio="replace" if replace else "mute",
+    cfg = Config(preserve_background=True, profanity_audio="mute",
                  encoder="libx264", render_validation="full")
     with patch("cleancut.background.check_runtime"), \
          patch("cleancut.background.subprocess.run", side_effect=worker), \

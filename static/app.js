@@ -1,7 +1,8 @@
 /* Shared helpers. */
 
 const CATEGORIES = ["profanity", "drugs", "sex", "violence", "nudity"];
-const ACTIONS = ["mute", "cut", "keep"];
+const ACTIONS = ["mute", "replace", "cut", "keep"];
+const actionLabel = (action) => action[0].toUpperCase() + action.slice(1);
 
 async function api(url, options) {
   const res = await fetch(url, {
@@ -87,7 +88,8 @@ function renderActionGrid(container, actions) {
   for (const cat of CATEGORIES) {
     const select = el("select", { "data-category": cat });
     for (const action of ACTIONS) {
-      const option = el("option", { value: action, text: action });
+      if (action === "replace" && cat !== "profanity") continue;
+      const option = el("option", { value: action, text: actionLabel(action) });
       if (actions[cat] === action) option.selected = true;
       select.appendChild(option);
     }

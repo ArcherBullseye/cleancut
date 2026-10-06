@@ -91,6 +91,7 @@ function renderSummary(summary) {
   container.appendChild(statTile(formatClock(summary.seconds_cut), "removed"));
   container.appendChild(statTile(summary.mutes, "mutes"));
   container.appendChild(statTile(formatClock(summary.seconds_muted), "muted"));
+  container.appendChild(statTile(summary.replacements || 0, "replacements"));
 
   // Cuts always require a full re-encode. A mute-only edit normally copies a
   // compatible H.264/HEVC stream; uncommon formats are converted so the result
@@ -99,7 +100,7 @@ function renderSummary(summary) {
   if (note) {
     note.textContent = summary.cuts > 0
       ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut avoids that unless the source format needs conversion for playback.`
-      : "No cuts accepted, only mutes. Compatible H.264/HEVC video will be copied and finish quickly; other formats are converted for macOS/browser playback.";
+      : "No cuts accepted. Compatible H.264/HEVC video can be copied; audio replacement/separation may still take time. Other formats are converted for macOS/browser playback.";
   }
 }
 
@@ -125,7 +126,8 @@ function decisionCard(decision) {
     onchange: (e) => edit(decision.index, { action: e.target.value }),
   });
   for (const action of ACTIONS) {
-    const option = el("option", { value: action, text: action });
+    if (action === "replace" && headCategory !== "profanity" && decision.action !== "replace") continue;
+    const option = el("option", { value: action, text: actionLabel(action) });
     if (decision.action === action) option.selected = true;
     actionSelect.appendChild(option);
   }
@@ -144,16 +146,22 @@ function decisionCard(decision) {
       decision.text_after ? el("span", { text: decision.text_after }) : null,
     ].filter(Boolean)));
     quote.push(el("p", { class: "muted small", text:
-      "Arrow shows the softened subtitle. Spoken replacement is separate and experimental." }));
+      decision.action === "replace"
+        ? "Replace attempts the softened word in the actor's voice; unavailable replacements stay muted."
+        : "Arrow shows the softened subtitle only. Choose Replace to generate spoken profanity replacement." }));
   }
   const speechControls = [];
-  if (decision.action === "mute" && accepted && (decision.word_edits || []).length) {
+  if (decision.action === "replace" && !(decision.word_edits || []).length) {
+    quote.push(el("p", { class: "muted small", text:
+      "No precise word metadata: this replacement will stay muted. Rescan the original movie to enable voice replacement." }));
+  }
+  if (["mute", "replace"].includes(decision.action) && accepted && (decision.word_edits || []).length) {
     speechControls.push(el("button", {
       class: "ghost", text: "Preview background-preserving mix",
       onclick: (e) => showBackground(card, decision, e.target),
     }));
   }
-  if (decision.action === "mute" && accepted &&
+  if (decision.action === "replace" && accepted &&
       (decision.word_edits || []).some(w => w.category === "profanity" &&
         w.text_before.toLowerCase() !== w.text_after.toLowerCase())) {
     speechControls.push(el("button", {

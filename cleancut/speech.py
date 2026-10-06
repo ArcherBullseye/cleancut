@@ -148,9 +148,12 @@ def _fit_clip(raw: Path, output: Path, target: float, reference_rms: float | Non
         trimmed.unlink(missing_ok=True)
 
 
-def eligible_words(edl: EditDecisionList, cuts: list[Range]) -> list[dict]:
+def eligible_words(edl: EditDecisionList, cuts: list[Range], *, include_mutes: bool = True) -> list[dict]:
     words: list[dict] = []
-    for d in edl.by_action("mute"):
+    audio_decisions = edl.audio_edits()
+    for d in audio_decisions:
+        if d.action == "mute" and not include_mutes:
+            continue
         for edit in d.word_edits:
             if edit.get("category") != "profanity":
                 continue
@@ -162,7 +165,10 @@ def eligible_words(edl: EditDecisionList, cuts: list[Range]) -> list[dict]:
             if (not math.isfinite(start + end) or start < d.start or end > d.end
                     or not 0.08 <= end - start <= 3 or not before or not after
                     or before.casefold() == after.casefold() or len(after.split()) > 4
-                    or any(start < c.end and end > c.start for c in cuts)):
+                    or any(start < c.end and end > c.start for c in cuts)
+                    or any(other is not d and other.action == "mute"
+                           and start < other.end and end > other.start
+                           for other in audio_decisions)):
                 continue
             if any(start < w["end"] and end > w["start"] for w in words):
                 continue
@@ -174,12 +180,12 @@ def prepare_replacements(video: Path, edl: EditDecisionList, subs: list[Subtitle
                          config: Config, work: Path, *, audio_index: int = 0,
                          cache_dir: Path | None = None,
                          cuts: list[Range] | None = None) -> list[SpeechClip]:
-    if config.profanity_audio != "replace":
+    if config.profanity_audio != "replace" and not edl.by_action("replace"):
         return []
     cuts = normalize_cuts(cuts if cuts is not None else [
         Range(d.start, d.end) for d in edl.by_action("cut")
     ])
-    edits = eligible_words(edl, cuts)
+    edits = eligible_words(edl, cuts, include_mutes=config.profanity_audio == "replace")
     if not edits:
         print("[cleancut] Voice replacement: no eligible word timings; using mutes. Rescan old jobs.",
               flush=True)

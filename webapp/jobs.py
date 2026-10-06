@@ -288,7 +288,7 @@ def _category_flags(opts: dict[str, Any]) -> list[str]:
     for cat in all_categories:
         args += ["--enable-category" if cat in enabled else "--disable-category", cat]
     for cat, action in (opts.get("actions") or {}).items():
-        if cat in all_categories and action in ("mute", "cut", "keep"):
+        if cat in all_categories and action in ("mute", "replace", "cut", "keep"):
             args += ["--action", f"{cat}={action}"]
     return args
 
@@ -360,8 +360,11 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
         "--verify-render", opts.get("render_validation") or "quick",
         "--prefer-language", opts.get("prefer_language") or "eng",
     ]
-    if opts.get("profanity_audio") == "replace":
-        cmd += ["--profanity-audio", "replace", "--speech-host",
+    # Legacy queued renders retain their snapshot. New renders use explicit
+    # EDL Replace actions and never infer replacement from app-wide settings.
+    cmd += ["--profanity-audio", opts.get("profanity_audio") or "mute"]
+    if opts.get("profanity_audio") == "replace" or opts.get("speech_host"):
+        cmd += ["--speech-host",
                 opts.get("speech_host") or "http://127.0.0.1:8765", "--speech-model",
                 opts.get("speech_model") or "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
     if opts.get("preserve_background"):
@@ -601,7 +604,7 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
         "subtitle_mode": cfg.get("subtitle_mode", "soft"),
         "prefer_language": opts.get("prefer_language", "eng"),
         "subs_path": str(transcript) if transcript.exists() else "",
-        "profanity_audio": cfg.get("profanity_audio", "mute"),
+        "profanity_audio": "mute",
         "preserve_background": cfg.get("preserve_background", False),
         "speech_host": cfg.get("speech_host", "http://127.0.0.1:8765"),
         "speech_model": cfg.get("speech_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"),

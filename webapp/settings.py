@@ -62,7 +62,8 @@ DEFAULTS: dict[str, Any] = {
     "output_location": "source" if _IS_MAC else "folder",
     "output_dir": "",
     "auto_render": False,
-    "profanity_audio": "mute",
+    "use_visual": True,
+    "allow_solo_visual": False,
     "preserve_background": False,
     "speech_host": os.environ.get("CLEANCUT_SPEECH_HOST", "http://127.0.0.1:8765"),
     "speech_model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
@@ -84,6 +85,13 @@ def load() -> dict[str, Any]:
     """Stored settings merged over the defaults."""
     merged = json.loads(json.dumps(DEFAULTS))
     stored = _read()
+    # Retire the old global switch. Carry its intent into the *next job's*
+    # profanity default, without changing any already-saved job/EDL actions.
+    if stored.get("profanity_audio") == "replace":
+        actions = dict(stored["actions"]) if isinstance(stored.get("actions"), dict) else {}
+        if actions.get("profanity", "mute") == "mute":
+            actions["profanity"] = "replace"
+        stored["actions"] = actions
     # Migrate only the exact legacy Mac defaults. User-selected model pairs and
     # custom hosts remain untouched.
     if _IS_MAC and stored.get("ollama_host") == "http://ollama_ollama_1:11434":
@@ -119,7 +127,18 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
                 continue
             if key == "output_location" and value not in {"source", "folder"}:
                 continue
-            if key == "profanity_audio" and value not in {"mute", "replace"}:
+            if key == "actions":
+                if not isinstance(value, dict):
+                    continue
+                value = {cat: action for cat, action in value.items()
+                         if cat in DEFAULTS["actions"] and isinstance(action, str)
+                         and action in {"mute", "replace", "cut", "keep"}
+                         and (action != "replace" or cat == "profanity")}
+            if key == "categories" and (
+                not isinstance(value, list) or any(cat not in tuple(DEFAULTS["actions"]) for cat in value)
+            ):
+                continue
+            if key in {"auto_render", "use_visual", "allow_solo_visual", "local_ai_enabled"} and not isinstance(value, bool):
                 continue
             if key == "preserve_background" and not isinstance(value, bool):
                 continue

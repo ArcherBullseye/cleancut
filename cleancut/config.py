@@ -13,7 +13,7 @@ from cleancut.constants import (
 )
 
 Category = Literal["profanity", "drugs", "sex", "violence", "nudity"]
-Action = Literal["mute", "cut", "keep"]
+Action = Literal["mute", "replace", "cut", "keep"]
 
 
 PRESETS = {

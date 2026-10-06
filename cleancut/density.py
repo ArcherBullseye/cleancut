@@ -53,7 +53,7 @@ def find_clusters(edl: EditDecisionList, params: DensityParams) -> EditDecisionL
     """
     events = sorted(
         [d for d in edl.decisions
-         if d.action in ("mute", "cut") and d.accepted and _is_dialogue_event(d)],
+         if d.action in ("mute", "replace", "cut") and d.accepted and _is_dialogue_event(d)],
         key=lambda d: d.start,
     )
     if len(events) < params.min_events:

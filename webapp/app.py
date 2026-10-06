@@ -15,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.9")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.10")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -127,10 +127,21 @@ def api_scan():
     if preset not in ("fast", "balanced", "thorough"):
         return _bad("Unknown preset.")
 
+    categories = body.get("categories", cfg["categories"])
+    actions = body.get("actions", cfg["actions"])
+    if not isinstance(categories, list) or any(cat not in review.CATEGORIES for cat in categories):
+        return _bad("Unknown categories.")
+    if not isinstance(actions, dict) or any(
+        cat not in review.CATEGORIES or action not in review.ACTIONS
+        or (action == "replace" and cat != "profanity") for cat, action in actions.items()
+    ):
+        return _bad("Unknown actions. Replace is only supported for profanity words.")
+    actions = {**cfg["actions"], **actions}
+
     local_ai = bool(body.get("use_local_ai", cfg["local_ai_enabled"]))
     options: dict[str, Any] = {
-        "categories": body.get("categories") or cfg["categories"],
-        "actions": body.get("actions") or cfg["actions"],
+        "categories": categories,
+        "actions": actions,
         "ollama_host": body.get("ollama_host", cfg["ollama_host"]),
         "llm_model": cfg["llm_model"],
         "vlm_model": cfg["vlm_model"],
@@ -138,8 +149,8 @@ def api_scan():
         "output_dir": cfg["output_dir"],
         "output_location": cfg["output_location"],
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
-        "use_visual": bool(body.get("use_visual", True)),
-        "allow_solo_visual": bool(body.get("allow_solo_visual", False)),
+        "use_visual": bool(body.get("use_visual", cfg["use_visual"])),
+        "allow_solo_visual": bool(body.get("allow_solo_visual", cfg["allow_solo_visual"])),
         "analysis_height": cfg["analysis_height"],
         "analysis_proxy": cfg["analysis_proxy"],
         "nudity_model": cfg["nudity_model"],
@@ -153,6 +164,14 @@ def api_scan():
     job_id = jobs.create_job(
         "scan", str(video), title=video.stem, preset=preset, options=options,
     )
+    # Remember this form for future jobs; the queued job owns its independent
+    # snapshot. No global render-time switch can turn its Mute into Replace.
+    settings_store.save({
+        "preset": preset, "categories": categories, "actions": actions,
+        "prefer_language": options["prefer_language"], "auto_render": options["auto_render"],
+        "local_ai_enabled": local_ai, "use_visual": options["use_visual"],
+        "allow_solo_visual": options["allow_solo_visual"],
+    })
     return jsonify({"ok": True, "job_id": job_id})
 
 
@@ -482,7 +501,6 @@ def api_background_preview(job_id: int, index: int):
         return _bad("No such decision.", 404)
     decision = edl.decisions[index]
     options = json.loads(job["options"] or "{}")
-    settings = settings_store.load()
     try:
         track = pick_audio_track(probe_streams(video), options.get("audio_track"),
                                  prefer_language=options.get("prefer_language", "eng"))
@@ -505,7 +523,7 @@ def api_background_preview(job_id: int, index: int):
             delta = target.start - shift_after_cuts(target.start, cuts)
             overlays = [SpeechClip(b.start + delta, b.end + delta, b.path) for b in backgrounds]
             transcript = jobs.transcript_path(job_id)
-            if settings.get("profanity_audio") == "replace" and transcript.exists():
+            if decision.action == "replace" and transcript.exists():
                 selected = EditDecisionList(decisions=[decision, *edl.by_action("cut")])
                 speech = prepare_replacements(video, selected, read_srt(transcript), _speech_config(),
                     Path(temporary) / "speech", audio_index=track.index,
