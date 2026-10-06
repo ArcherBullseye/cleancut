@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .venv-macos/
 .venv-speech/
+.venv-separation/
 # Anchored to the repo root: an unanchored `data/` also matches
 # cleancut/data/, which holds the wordlists the detector needs.
 /data/

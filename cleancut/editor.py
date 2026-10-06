@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -386,14 +387,31 @@ def _ffmpeg_has_libass() -> bool:
 def _batch_speech_clips(clips: list[SpeechClip], directory: Path) -> list[SpeechClip]:
     """Bound open WAV decoders on films with hundreds of profanity edits.
 
-    Each AAC bed starts at zero on the edited timeline. Batches are recursive
+    Each lossless bed starts at zero on the edited timeline. Batches are recursive
     so even very long lists never exceed 24 input files in a single process.
-    The temporary beds contain only generated words, not the movie soundtrack.
+    The temporary beds contain only word overlays (speech/restored background),
+    not the full movie soundtrack. Lossless FLAC preserves surround layout,
+    avoids another lossy encode, and compresses the long silent gaps.
     """
     from cleancut.speech import SpeechClip
 
     if len(clips) <= 24:
         return clips
+    channels = 1
+    for clip in clips:
+        try:
+            with wave.open(str(clip.path), "rb") as wav:
+                channels = max(channels, wav.getnchannels())
+        except (OSError, ValueError, wave.Error, EOFError):
+            from cleancut.probe import audio_streams, probe_streams
+
+            tracks = audio_streams(probe_streams(clip.path))
+            if not tracks or not tracks[0].channels:
+                raise ValueError("Cannot determine audio overlay channel count")
+            channels = max(channels, tracks[0].channels)
+    layout = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}.get(channels)
+    if layout is None:
+        raise ValueError("Unsupported audio overlay channel count")
     beds = []
     for offset in range(0, len(clips), 24):
         group = clips[offset:offset + 24]
@@ -402,13 +420,14 @@ def _batch_speech_clips(clips: list[SpeechClip], directory: Path) -> list[Speech
         for i, clip in enumerate(group):
             cmd += ["-i", str(clip.path.resolve())]
             graph.append(f"[{i}:a]atrim=duration={clip.end-clip.start:.8f},asetpts=PTS-STARTPTS,"
+                         f"aformat=channel_layouts={layout},"
                          f"adelay={round(clip.start*1000)}:all=1[s{i}]")
         graph.append("".join(f"[s{i}]" for i in range(len(group)))
                      + f"amix=inputs={len(group)}:duration=longest:"
                        "dropout_transition=0:normalize=0[out]")
-        output = directory / f"bed-{len(clips)}-{offset}.m4a"
-        cmd += ["-filter_complex", ";".join(graph), "-map", "[out]", "-c:a", "aac",
-                "-b:a", "128k", str(output)]
+        output = directory / f"bed-{len(clips)}-{offset}.flac"
+        cmd += ["-filter_complex", ";".join(graph), "-map", "[out]", "-c:a", "flac",
+                "-compression_level", "5", str(output)]
         subprocess.run(cmd, check=True)
         beds.append(SpeechClip(0, max(clip.end for clip in group), output))
     return _batch_speech_clips(beds, directory)
@@ -464,7 +483,7 @@ def apply_mutes_and_subs(
         try:
             speech_clips = _batch_speech_clips(speech_clips, speech_dir)
         except Exception as exc:  # noqa: BLE001 -- an optional voice bed must not break censorship.
-            print(f"[cleancut] Speech batching failed: {exc}; using word mutes.", flush=True)
+            print(f"[cleancut] Audio overlay batching failed: {exc}; using word mutes.", flush=True)
             speech_clips = []
             shutil.rmtree(speech_dir, ignore_errors=True)
             speech_dir = None
@@ -567,7 +586,7 @@ def apply_mutes_and_subs(
         except subprocess.CalledProcessError:
             if not speech_clips:
                 raise
-            print("[cleancut] Speech mix failed; retrying with word-only mutes.", flush=True)
+            print("[cleancut] Audio overlay mix failed; retrying with word-only mutes.", flush=True)
             apply_mutes_and_subs(input_path, mutes, srt_path, output_path,
                                  burn_subs=burn_subs, encoder=encoder, quality=quality,
                                  validation=validation, audio_index=audio_index)

@@ -63,6 +63,7 @@ DEFAULTS: dict[str, Any] = {
     "output_dir": "",
     "auto_render": False,
     "profanity_audio": "mute",
+    "preserve_background": False,
     "speech_host": os.environ.get("CLEANCUT_SPEECH_HOST", "http://127.0.0.1:8765"),
     "speech_model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
     "speech_token": os.environ.get("CLEANCUT_SPEECH_TOKEN", ""),
@@ -119,6 +120,8 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
             if key == "output_location" and value not in {"source", "folder"}:
                 continue
             if key == "profanity_audio" and value not in {"mute", "replace"}:
+                continue
+            if key == "preserve_background" and not isinstance(value, bool):
                 continue
             if key in {"speech_host", "speech_model", "speech_token"}:
                 if not isinstance(value, str) or len(value) > 512:

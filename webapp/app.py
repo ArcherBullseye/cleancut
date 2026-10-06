@@ -15,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.8")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.9")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -409,6 +409,16 @@ def api_speech():
         return jsonify(ok=False, reason=str(exc))
 
 
+@app.route("/api/separation")
+def api_separation():
+    from cleancut.background import check_runtime
+
+    try:
+        return jsonify(ok=True, **check_runtime())
+    except Exception as exc:  # noqa: BLE001 -- optional runtime failures are user-facing diagnostics.
+        return jsonify(ok=False, reason=str(exc))
+
+
 @app.route("/api/job/<int:job_id>/speech/<int:index>", methods=["POST"])
 def api_speech_preview(job_id: int, index: int):
     from cleancut.edl import EditDecisionList
@@ -449,6 +459,65 @@ def api_speech_preview(job_id: int, index: int):
         return send_file(clips[0].path, mimetype="audio/wav", conditional=False)
     except Exception as exc:
         return _bad(f"Could not preview speech: {exc}")
+
+
+@app.route("/api/job/<int:job_id>/background/<int:index>", methods=["POST"])
+def api_background_preview(job_id: int, index: int):
+    from cleancut.background import prepare_background, preview_mix
+    from cleancut.config import Config
+    from cleancut.editor_ranges import Range, normalize_cuts, shift_after_cuts
+    from cleancut.edl import EditDecisionList
+    from cleancut.probe import pick_audio_track, probe_duration, probe_streams
+    from cleancut.speech import SpeechClip, prepare_replacements
+    from cleancut.subtitles import read_srt
+
+    job, path, err = _edl_job(job_id)
+    if err:
+        return err
+    video = _video_for(job)
+    if video is None or not video.is_file():
+        return _bad("The source share is not mounted.", 404)
+    edl = EditDecisionList.from_json(path)
+    if not 0 <= index < len(edl.decisions):
+        return _bad("No such decision.", 404)
+    decision = edl.decisions[index]
+    options = json.loads(job["options"] or "{}")
+    settings = settings_store.load()
+    try:
+        track = pick_audio_track(probe_streams(video), options.get("audio_track"),
+                                 prefer_language=options.get("prefer_language", "eng"))
+        if track is None:
+            return _bad("No usable audio track.")
+        cuts = normalize_cuts([Range(d.start, d.end) for d in edl.by_action("cut")], probe_duration(video))
+        target = Range(decision.start, decision.end)
+        with tempfile.TemporaryDirectory(prefix="cleancut-background-preview-") as temporary:
+            backgrounds = prepare_background(
+                video, edl, Config(preserve_background=True), Path(temporary),
+                audio_index=track.index, channels=track.channels or 2, cuts=cuts,
+                cache_dir=path.parent / "background", only=target,
+                language=options.get("prefer_language", "eng"),
+            )
+            if not backgrounds:
+                return _bad("Background unavailable or rejected: only accepted word-timed mutes "
+                            "outside cuts qualify. Check the render log and separation installation. "
+                            "The full word mute remains in place.")
+            # Preview source context; returned cache clips are on edited time.
+            delta = target.start - shift_after_cuts(target.start, cuts)
+            overlays = [SpeechClip(b.start + delta, b.end + delta, b.path) for b in backgrounds]
+            transcript = jobs.transcript_path(job_id)
+            if settings.get("profanity_audio") == "replace" and transcript.exists():
+                selected = EditDecisionList(decisions=[decision, *edl.by_action("cut")])
+                speech = prepare_replacements(video, selected, read_srt(transcript), _speech_config(),
+                    Path(temporary) / "speech", audio_index=track.index,
+                    cache_dir=path.parent / "speech", cuts=cuts)
+                overlays.extend(SpeechClip(s.start + delta, s.end + delta, s.path) for s in speech)
+            preview = path.parent / "background" / f"preview-{index}.wav"
+            rendered = Path(temporary) / "preview.wav"
+            preview_mix(video, target, rendered, audio_index=track.index, overlays=overlays)
+            rendered.replace(preview)
+        return send_file(preview, mimetype="audio/wav", conditional=False)
+    except Exception as exc:  # noqa: BLE001 -- optional preview errors must not crash the web UI.
+        return _bad(f"Could not preview background mix: {exc}")
 
 
 @app.route("/api/health")

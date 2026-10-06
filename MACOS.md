@@ -192,8 +192,8 @@ failure mid-job stops further attempts instead of timing out for every word.
 This is experimental dubbing, not speaker diarization or studio-quality
 dialogue separation. A reference can still contain unmarked speaker changes
 or music, and generated pronunciation/delivery needs listening review.
-Music/effects are briefly muted with the original word too; preserving them
-requires a separate dialogue-separation stage that is not implemented here.
+Music/effects are briefly muted with the original word unless optional
+[background preservation](#background-preserving-word-edits-beta9) is enabled.
 There is no automatic ASR verification of generated words yet.
 
 On an 18 GB Mac, avoid keeping Qwen3.5, a large Whisper model, and TTS resident
@@ -222,3 +222,70 @@ After updating and restarting CleanCut, re-render the existing scan of the
 this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
+
+## Background-preserving word edits (beta.9)
+
+This optional mode estimates voice and background separately around reviewed
+word mutes. The full original mix is still muted during each target; only the
+verified estimated background is mixed back, plus replacement speech if that
+mode is enabled. Audio outside the mute stays on the original soundtrack.
+Scene cuts still remove both video and audio; this is not a way to carry music
+across a deleted scene.
+
+Install on the **Mac running CleanCut**, even if Qwen3-TTS lives on another Mac:
+
+```sh
+cd "$HOME/cleancut"
+git pull origin codex/macos-native-v2
+./macos/install-separation.sh
+./macos/run.sh
+```
+
+Stop the running CleanCut process before restarting it. The installer creates
+`.venv-separation` without changing `.venv-macos` or `.venv-speech`. It downloads
+the free [Demucs htdemucs](https://github.com/facebookresearch/demucs) weights
+(80 MB) and [Whisper tiny](https://github.com/openai/whisper) verification weights
+(72 MB) once. Both projects use the MIT license. Demucs model downloads are
+checksum-verified. Inference loads explicit local checkpoints, never a cloud
+API or a remotely resolved model. No separate server or Ollama model is needed.
+
+In **Settings**, enable **Preserve background during word mutes**, click
+**Test separation installation**, then **Save**. Keep the category action
+**Mute**. Choose either ordinary mute or actor-voice replacement in the separate
+profanity audio setting. On the scan review page, use **Preview
+background-preserving mix**: it plays the edited word with two seconds of
+surrounding audio and, if enabled, generated replacement speech. Then re-render
+the original movie. Previewed background clips are cached and reused in renders.
+Old scans without word-edit metadata need rescanning; beta.7+ word-timed scans
+do not need rescanning merely to enable this feature.
+
+Only accepted, precise word mutes qualify. Broad scene/audio-event mutes, edits
+overlapping another mute, and words intersecting cuts remain full-mix mutes.
+Nearby words share bounded windows (at most 16 seconds); the separator never
+loads the complete film soundtrack into memory. Mono/stereo and standard
+5.1/7.1 channel counts are retained. Stereo is separated together; surround
+channels are separated individually to avoid collapsing them into stereo.
+Long overlay lists use lossless FLAC beds rather than another lossy music encode.
+The beta.8 cut-time mapping applies to background clips too.
+
+For predictable compatibility the worker uses CPU, with bounded six-second
+Demucs inference segments and four Torch threads. The process exits before
+replacement speech generation, releasing its model memory. Concurrent
+separation previews/renders are refused rather than loading duplicate models.
+On an 18 GB Mac, stop the scanning Ollama model before rendering if memory is
+tight: `ollama stop qwen3.5:9b`. Separation adds processing time even when the
+video itself is stream-copied.
+
+This is **experimental source separation, not a guaranteed dialogue stem**.
+Demucs was trained for music vocals; cinematic effects, singing, overlapping
+speakers, and reverb can be incorrectly removed or bleed through. Every channel
+of the estimated background is checked with local Whisper word timestamps;
+recognized speech near the target rejects that background and retains the
+full-word mute. Missing installation, invalid audio, a busy worker, or an
+inference/mixing failure also retains the mute. Whisper can miss faint speech
+or hallucinate words in music, so this check can both miss leakage and reject
+otherwise useful backgrounds. **Listen to the preview and final output**;
+disable preservation when strict censorship is more important than continuity.
+There are short five-millisecond fades on restored backgrounds to reduce clicks.
+The feature has synthetic audio/model smoke coverage; movie-quality evaluation
+on your destination Mac is still needed.

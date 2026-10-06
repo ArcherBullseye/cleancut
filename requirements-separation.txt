@@ -1,0 +1,7 @@
+# Optional isolated worker; never change the app or MLX speech environments.
+demucs==4.0.1
+torch==2.5.1
+torchaudio==2.5.1
+numpy==1.26.4
+openai-whisper==20250625
+srt==3.5.3

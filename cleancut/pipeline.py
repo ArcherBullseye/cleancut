@@ -470,22 +470,33 @@ def render(
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
 
         speech_clips = []
+        background_clips = []
         audio_index = None
-        if config.profanity_audio == "replace":
+        if config.profanity_audio == "replace" or config.preserve_background:
             from cleancut.probe import pick_audio_track, probe_streams
-            from cleancut.speech import prepare_replacements
 
             # References, censored dialogue and output must use the same track.
             track = pick_audio_track(probe_streams(opts.video), opts.audio_track,
                                      prefer_language=opts.prefer_language)
             if track is not None:
                 audio_index = track.index
-                speech_clips = prepare_replacements(
-                    opts.video, edl, subs, config, work / "speech",
-                    audio_index=audio_index,
-                    cuts=cuts,
-                    cache_dir=opts.edl_in.parent / "speech" if opts.edl_in else None,
-                )
+                if config.preserve_background:
+                    from cleancut.background import prepare_background
+
+                    background_clips = prepare_background(
+                        opts.video, edl, config, work / "background", audio_index=audio_index,
+                        channels=track.channels or 2, cuts=cuts, language=opts.prefer_language,
+                        cache_dir=opts.edl_in.parent / "background" if opts.edl_in else None,
+                    )
+                if config.profanity_audio == "replace":
+                    from cleancut.speech import prepare_replacements
+
+                    speech_clips = prepare_replacements(
+                        opts.video, edl, subs, config, work / "speech",
+                        audio_index=audio_index,
+                        cuts=cuts,
+                        cache_dir=opts.edl_in.parent / "speech" if opts.edl_in else None,
+                    )
 
         # Step 1: apply cuts (re-encode if needed).
         if cuts:
@@ -524,8 +535,8 @@ def render(
             encoder=encoder,
             quality=config.quality,
             validation=config.render_validation,
-            **({"speech_clips": speech_clips, "audio_index": audio_index}
-               if config.profanity_audio == "replace" else {}),
+            **({"speech_clips": [*background_clips, *speech_clips], "audio_index": audio_index}
+               if config.profanity_audio == "replace" or config.preserve_background else {}),
         )
     finally:
         # Intermediates (e.g. the movie-sized .cut.mp4) would otherwise leak

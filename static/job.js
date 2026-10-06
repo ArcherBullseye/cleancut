@@ -147,6 +147,12 @@ function decisionCard(decision) {
       "Arrow shows the softened subtitle. Spoken replacement is separate and experimental." }));
   }
   const speechControls = [];
+  if (decision.action === "mute" && accepted && (decision.word_edits || []).length) {
+    speechControls.push(el("button", {
+      class: "ghost", text: "Preview background-preserving mix",
+      onclick: (e) => showBackground(card, decision, e.target),
+    }));
+  }
   if (decision.action === "mute" && accepted &&
       (decision.word_edits || []).some(w => w.category === "profanity" &&
         w.text_before.toLowerCase() !== w.text_after.toLowerCase())) {
@@ -205,6 +211,29 @@ async function showSpeech(card, decision, button) {
   finally {
     button.disabled = false;
     button.textContent = "Preview first voice replacement";
+  }
+}
+
+async function showBackground(card, decision, button) {
+  button.disabled = true;
+  button.textContent = "Separating and checking audio...";
+  try {
+    const response = await fetch(`/api/job/${JOB_ID}/background/${decision.index}`, { method: "POST" });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Could not separate background");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const audio = el("audio", { controls: "", src: url });
+    card.querySelector(".body").appendChild(audio);
+    card.querySelector(".body").appendChild(el("p", { class: "muted small", text:
+      "Preview only. Enable Preserve background during word mutes in Settings, save, then render to apply it." }));
+    audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+    await audio.play();
+  } catch (e) { toast(e.message, true); }
+  finally {
+    button.disabled = false;
+    button.textContent = "Preview background-preserving mix";
   }
 }
 

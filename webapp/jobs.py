@@ -56,6 +56,8 @@ _STAGE_MARKERS: list[tuple[str, str]] = [
     ("Encoder", "Encoding"),
     ("Generating replacement", "Generating replacement speech"),
     ("Voice replacement", "Preparing replacement speech"),
+    ("Separating background", "Separating dialogue and background"),
+    ("Background preservation", "Preparing background audio"),
     ("Wrote report", "Writing report"),
 ]
 
@@ -362,6 +364,8 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
         cmd += ["--profanity-audio", "replace", "--speech-host",
                 opts.get("speech_host") or "http://127.0.0.1:8765", "--speech-model",
                 opts.get("speech_model") or "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
+    if opts.get("preserve_background"):
+        cmd.append("--preserve-background")
     if opts.get("audio_track") not in (None, ""):
         cmd += ["--audio-track", str(opts["audio_track"])]
     # Reuse the scan's transcript. Without it, `clean` re-runs Whisper purely to
@@ -598,6 +602,7 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
         "prefer_language": opts.get("prefer_language", "eng"),
         "subs_path": str(transcript) if transcript.exists() else "",
         "profanity_audio": cfg.get("profanity_audio", "mute"),
+        "preserve_background": cfg.get("preserve_background", False),
         "speech_host": cfg.get("speech_host", "http://127.0.0.1:8765"),
         "speech_model": cfg.get("speech_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"),
         "audio_track": opts.get("audio_track"),

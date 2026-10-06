@@ -44,6 +44,7 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("quality", "quality"),
     ("verify_render", "render_validation"),
     ("profanity_audio", "profanity_audio"),
+    ("preserve_background", "preserve_background"),
     ("speech_host", "speech_host"),
     ("speech_model", "speech_model"),
     ("density", "density_enabled"),
@@ -232,6 +233,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--speech-host", default=None,
                    help="Local/LAN CleanCut speech service URL (not Ollama's port).")
     p.add_argument("--speech-model", default=None, help="Speech model ID hosted by the companion.")
+    p.add_argument("--preserve-background", action=argparse.BooleanOptionalAction, default=None,
+                   help="Local separation: restore music/effects during precise word mutes (experimental).")
     p.add_argument("--prefer-language", default="eng",
                    help="ISO-639 language code to prefer for subs and audio (default: eng).")
     p.add_argument("--save-transcript", default=None,

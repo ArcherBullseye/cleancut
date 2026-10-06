@@ -21,8 +21,12 @@ The Mac beta also offers optional local Qwen3-TTS actor-voice replacements
 for profanity, with audio previews and word-only mute fallback. Host the MLX
 speech companion alongside Ollama on the AI Mac (separate port 8765), then
 enable it in Settings. See the [speech setup](MACOS.md#optional-actor-voice-profanity-replacement-beta7).
-This is experimental dubbing; seamless background-music preservation is not
-implemented yet.
+The Mac beta can also optionally preserve estimated music/effects during word
+mutes using local Demucs separation and a Whisper speech-leak check. It works
+with mute or voice replacement, includes a mixed-audio preview, and retains a
+full mute on failures. See [background preservation](MACOS.md#background-preserving-word-edits-beta9).
+Both features are experimental and need listening review; perfect separation
+and removal of every faint word are not guaranteed.
 
 This packages [monahand1023/cleancut](https://github.com/monahand1023/cleancut)
 (MIT, by Dan Monahan) as an Umbrel community app: the upstream detection

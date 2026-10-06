@@ -164,6 +164,7 @@ class Config:
     speech_model: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
     speech_token: str = ""
     speech_timeout: float = 120.0
+    preserve_background: bool = False  # optional local separation, fail closed to mute
 
     @classmethod
     def load_defaults(cls) -> Config:

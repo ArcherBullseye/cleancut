@@ -64,6 +64,18 @@
       on the scan review page before rendering. Existing renders do not change.</p>
   </div>
   <div class="field">
+    <label class="check"><input type="checkbox" id="preserve-background"> Preserve background during word mutes (experimental)</label>
+    <p class="muted small">Locally separate short passages into voice and background,
+      then restore estimated music/effects during the muted word. Works with mute
+      or voice replacement. Run <code>./macos/install-separation.sh</code> on the
+      Mac running CleanCut first. Recognized speech or separation errors retain a
+      full mute. Separation can miss faint speech or alter effects—preview the mix.</p>
+    <div class="row">
+      <button id="test-separation" class="ghost">Test separation installation</button>
+      <span id="separation-status" class="muted small"></span>
+    </div>
+  </div>
+  <div class="field">
     <label for="speech-host">Local speech service host</label>
     <input type="text" id="speech-host" placeholder="http://192.168.1.20:8765">
     <p class="muted small">Run <code>macos/install-speech.sh</code> and
