@@ -203,3 +203,22 @@ Stop the speech terminal before starting another memory-heavy scan if needed.
 The companion serializes generation rather than running multiple clones in
 parallel. Actual voice quality and peak memory still need testing with your
 movie clips on the destination Mac.
+
+## Cut timing fix (beta.8)
+
+Scene cuts, mutes, subtitles, and replacement speech now share one normalized
+source-to-output cut plan. Overlapping cuts count once, cut endpoints use
+half-open intervals, and mutes/subtitles that overlap a cut trim to its join
+instead of jumping to the start of the movie. Later cuts always remain on the
+original source timeline; they are never shifted and then applied a second time.
+
+The cut renderer no longer joins video and audio with per-segment padding,
+which could accumulate timing drift at fractional-frame cut boundaries. Video
+timestamps subtract the removed time directly, and audio joins on its sample
+clock. Video is rounded to the source frame rate once on the final timeline.
+
+After updating and restarting CleanCut, re-render the existing scan of the
+**original movie** to repair an affected output. A new scan is not required for
+this timing fix. Old scans still need rescanning to add word-level replacement
+metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
+the input for the original scan's timestamps.

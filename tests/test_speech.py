@@ -371,11 +371,32 @@ def test_cached_preview_is_reused_at_render_and_shifted_without_regeneration(tmp
         preview = prepare_replacements(video, edl, subs, config, tmp_path / "preview",
                                        audio_index=1, cache_dir=tmp_path / "cache")
         edl.add(EditDecision(.5, 1.5, "cut", "nudity"))
+        edl.add(EditDecision(.8, 1.2, "cut", "violence"))  # overlap is removed only once
         rendered = prepare_replacements(video, edl, subs, config, tmp_path / "render",
                                         audio_index=1, cache_dir=tmp_path / "cache")
     assert request.call_count == 1
     assert preview[0].path == rendered[0].path
     assert abs(rendered[0].start - 1.2) < .001
+
+
+def test_word_at_exact_cut_end_survives_and_is_shifted_to_join(tmp_path):
+    video = tmp_path / "movie"
+    video.write_bytes(b"fingerprint")
+    edl = EditDecisionList(decisions=[word_decision(), EditDecision(0, 2.2, "cut", "nudity")])
+
+    def extract(*args):
+        Path(args[-1]).write_bytes(wav_bytes(4))
+
+    with patch("cleancut.speech.check_service", return_value={}), \
+         patch("cleancut.speech._request", return_value=wav_bytes(.6)), \
+         patch("cleancut.speech._run_ffmpeg", side_effect=extract), \
+         patch("cleancut.speech._fit_clip", side_effect=lambda raw, out, target, rms:
+               out.write_bytes(wav_bytes(target))):
+        clips = prepare_replacements(video, edl, [Subtitle(1, 0, 4, "That was damn good.")],
+                                     Config(profanity_audio="replace"), tmp_path / "speech")
+    assert len(clips) == 1
+    assert clips[0].start == 0
+    assert abs(clips[0].end - .6) < .001
 
 
 def test_web_connection_check_uses_unsaved_host_and_token_without_returning_secret():

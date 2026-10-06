@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from cleancut.config import Config
-from cleancut.editor_ranges import Range, shift_after_cuts
+from cleancut.editor_ranges import Range, normalize_cuts, shift_after_cuts
 from cleancut.edl import EditDecisionList
 from cleancut.subtitles import Subtitle
 
@@ -172,10 +172,13 @@ def eligible_words(edl: EditDecisionList, cuts: list[Range]) -> list[dict]:
 
 def prepare_replacements(video: Path, edl: EditDecisionList, subs: list[Subtitle],
                          config: Config, work: Path, *, audio_index: int = 0,
-                         cache_dir: Path | None = None) -> list[SpeechClip]:
+                         cache_dir: Path | None = None,
+                         cuts: list[Range] | None = None) -> list[SpeechClip]:
     if config.profanity_audio != "replace":
         return []
-    cuts = [Range(d.start, d.end) for d in edl.by_action("cut")]
+    cuts = normalize_cuts(cuts if cuts is not None else [
+        Range(d.start, d.end) for d in edl.by_action("cut")
+    ])
     edits = eligible_words(edl, cuts)
     if not edits:
         print("[cleancut] Voice replacement: no eligible word timings; using mutes. Rescan old jobs.",

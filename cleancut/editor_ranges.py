@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from cleancut.edl import EditDecisionList
@@ -20,7 +21,7 @@ class Range:
 
 def keep_segments(duration: float, cuts: list[Range]) -> list[Range]:
     """Complement of cuts within [0, duration]. Returns the segments we keep."""
-    cuts = sorted(cuts, key=lambda r: r.start)
+    cuts = normalize_cuts(cuts, duration)
     kept: list[Range] = []
     cursor = 0.0
     for c in cuts:
@@ -33,13 +34,26 @@ def keep_segments(duration: float, cuts: list[Range]) -> list[Range]:
         cursor = max(cursor, e)
     if cursor < duration:
         kept.append(Range(cursor, duration))
-    return [r for r in kept if r.duration > 0.001]
+    return [r for r in kept if r.duration > 0]
 
 
-def _merge_ranges(ranges: list[Range]) -> list[Range]:
-    """Sort and union overlapping/touching ranges."""
+def normalize_cuts(ranges: list[Range], duration: float | None = None) -> list[Range]:
+    """The single cut plan used by rendering and every timestamp mapper.
+
+    Cuts are half-open [start, end), clipped to the source, and unioned. Never
+    subtract overlapping or out-of-bounds removed time twice.
+    """
+    clipped = []
+    for r in ranges:
+        if not math.isfinite(r.start) or not math.isfinite(r.end):
+            raise ValueError("Cut timestamps must be finite")
+        start, end = max(0.0, r.start), r.end
+        if duration is not None:
+            end = min(end, duration)
+        if end > start:
+            clipped.append(Range(start, end))
     merged: list[Range] = []
-    for r in sorted(ranges, key=lambda r: r.start):
+    for r in sorted(clipped, key=lambda r: r.start):
         if merged and r.start <= merged[-1].end:
             merged[-1] = Range(merged[-1].start, max(merged[-1].end, r.end))
         else:
@@ -54,10 +68,10 @@ def shift_after_cuts(t: float, cuts: list[Range]) -> float | None:
     unioned first — subtracting each duration would double-count the overlap.
     """
     out = t
-    for c in _merge_ranges(cuts):
+    for c in normalize_cuts(cuts):
         if c.start > t:
             break
-        if c.start <= t <= c.end:
+        if c.start <= t < c.end:
             return None
         out -= c.duration
     return max(0.0, out)
@@ -69,57 +83,41 @@ def adjust_subtitles_for_cuts(
     """Shift / trim / drop subtitles to match a video with the given cuts removed."""
     if not cuts:
         return list(subs)
-    cuts = sorted(cuts, key=lambda r: r.start)
+    cuts = normalize_cuts(cuts)
     out: list[Subtitle] = []
     next_idx = 1
     for s in subs:
-        new_start = shift_after_cuts(s.start, cuts)
-        new_end = shift_after_cuts(s.end, cuts)
-        # Both endpoints fall inside cuts -> drop.
-        if new_start is None and new_end is None:
+        mapped = _map_interval(Range(s.start, s.end), cuts)
+        if mapped is None:
             continue
-        # Start cut out: snap to the next keep boundary.
-        if new_start is None:
-            for c in cuts:
-                if c.start <= s.start <= c.end:
-                    snapped = shift_after_cuts(c.end + 1e-4, cuts) or 0.0
-                    new_start = snapped
-                    break
-        if new_end is None:
-            for c in cuts:
-                if c.start <= s.end <= c.end:
-                    snapped = shift_after_cuts(c.start - 1e-4, cuts)
-                    new_end = snapped if snapped is not None else new_start
-                    break
-        if new_start is None or new_end is None or new_end <= new_start:
-            continue
-        out.append(Subtitle(index=next_idx, start=new_start, end=new_end, text=s.text))
+        out.append(Subtitle(index=next_idx, start=mapped.start, end=mapped.end, text=s.text))
         next_idx += 1
     return out
 
 
 def shift_ranges_after_cuts(ranges: list[Range], cuts: list[Range]) -> list[Range]:
     """Map mute ranges from source timeline to cut-output timeline."""
+    cuts = normalize_cuts(cuts)
     out: list[Range] = []
     for r in ranges:
-        ns = shift_after_cuts(r.start, cuts)
-        ne = shift_after_cuts(r.end, cuts)
-        if ns is None and ne is None:
-            continue
-        if ns is None:
-            ns = 0.0
-        if ne is None:
-            # Range tail falls inside a cut: trim to the cut boundary.
-            for c in sorted(cuts, key=lambda x: x.start):
-                if c.start <= r.end <= c.end:
-                    snapped = shift_after_cuts(c.start - 1e-4, cuts)
-                    if snapped is not None:
-                        ne = snapped
-                    break
-        if ne is None or ne <= ns:
-            continue
-        out.append(Range(ns, ne))
+        mapped = _map_interval(r, cuts)
+        if mapped is not None:
+            out.append(mapped)
     return out
+
+
+def _map_interval(r: Range, cuts: list[Range]) -> Range | None:
+    """Collapse cut portions to their join, preserving all surviving content.
+
+    Unlike a point lookup, endpoints inside cuts must snap to that join, not
+    zero. Endpoints in different cuts can still enclose a surviving interval.
+    """
+    def collapse(t: float) -> float:
+        t = max(0.0, t)
+        return t - sum(max(0.0, min(t, c.end) - c.start) for c in cuts)
+
+    start, end = collapse(r.start), collapse(r.end)
+    return Range(start, end) if end - start > 1e-9 else None
 
 
 def edl_to_ranges(edl: EditDecisionList, action: str) -> list[Range]:

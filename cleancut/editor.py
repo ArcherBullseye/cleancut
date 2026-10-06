@@ -23,6 +23,7 @@ from cleancut.editor_ranges import (  # noqa: F401
     adjust_subtitles_for_cuts,
     edl_to_ranges,
     keep_segments,
+    normalize_cuts,
     shift_after_cuts,
     shift_ranges_after_cuts,
 )
@@ -306,24 +307,39 @@ def apply_cuts(
         return
 
     duration = probe_duration(input_path)
+    cuts = normalize_cuts(cuts, duration)
     segments = keep_segments(duration, cuts)
     if not segments:
         raise RuntimeError("All segments cut — nothing left to render.")
 
-    parts: list[str] = []
+    # Do not concat video+audio segments together: concat pads each segment
+    # to the longer stream's duration. Fractional frame boundaries then add
+    # silence and cumulative drift that the EDL's time mapping cannot predict.
+    # Video frames keep source timestamps minus the EXACT removed time. Audio
+    # is concatenated independently on its sample clock, with no video padding.
+    removed_frames = "+".join(
+        f"gte(t,{c.start:.9f})*lt(t,{c.end:.9f})" for c in cuts
+    ) or "0"
+    removed_time = "+".join(
+        f"gte(PTS*TB,{c.end:.9f})*{c.duration:.9f}/TB" for c in cuts
+    ) or "0"
+    parts: list[str] = [
+        f"[0:v:0]trim=end={duration:.9f},settb=AVTB,"
+        f"select='not({removed_frames})',setpts='PTS-({removed_time})',"
+        f"fps=fps={_playback_rate_args(source_stream)[1]}:round=near[outv]"
+    ]
     concat_inputs: list[str] = []
     for i, seg in enumerate(segments):
         parts.append(
-            f"[0:v]trim=start={seg.start:.3f}:end={seg.end:.3f},"
-            f"setpts=PTS-STARTPTS[v{i}];"
             f"[0:{audio_index if audio_index is not None else 'a'}]"
-            f"atrim=start={seg.start:.3f}:end={seg.end:.3f},"
+            "asettb=1/sr,asetpts=N/SR/TB,"
+            f"atrim=start={seg.start:.9f}:end={seg.end:.9f},"
             f"asetpts=PTS-STARTPTS[a{i}]"
         )
-        concat_inputs.append(f"[v{i}][a{i}]")
+        concat_inputs.append(f"[a{i}]")
     filter_complex = ";".join(parts) + ";" + "".join(concat_inputs) + (
-        f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
-    ) + f";[outa]{KNOWN_LAYOUTS}[outa_fmt]"
+        f"concat=n={len(segments)}:v=0:a=1,asetpts=N/SR/TB,{KNOWN_LAYOUTS}[outa_fmt]"
+    )
 
     encoder_args = _video_encoder_args(encoder, quality, source_stream)
     cmd = [
@@ -345,7 +361,7 @@ def apply_cuts(
             quality=quality,
             partial=partial,
         )
-        expected = max(0.0, duration - sum(r.duration for r in cuts))
+        expected = sum(r.duration for r in segments)
         _finish_atomic_output(
             partial, output_path,
             expected_duration=expected,

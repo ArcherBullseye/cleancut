@@ -167,7 +167,7 @@ class TestApplyCuts:
         assert cmd[cmd.index("-c") + 1] == "copy"
         assert "-filter_complex" not in cmd
 
-    def test_cuts_build_trim_concat_filter(self, tmp_path):
+    def test_cuts_use_exact_video_time_mapping_and_audio_only_concat(self, tmp_path):
         from cleancut.editor import Range, apply_cuts
 
         calls, fake_run = _capture_run()
@@ -180,9 +180,10 @@ class TestApplyCuts:
         cmd, _ = calls[0]
         fc = cmd[cmd.index("-filter_complex") + 1]
         # Two kept segments: [0,10] and [20,100], concatenated.
-        assert "trim=start=0.000:end=10.000" in fc
-        assert "trim=start=20.000:end=100.000" in fc
-        assert "concat=n=2:v=1:a=1" in fc
+        assert "atrim=start=0.000000000:end=10.000000000" in fc
+        assert "atrim=start=20.000000000:end=100.000000000" in fc
+        assert "concat=n=2:v=0:a=1" in fc
+        assert "setpts='PTS-(gte(PTS*TB,20.000000000)*10.000000000/TB)'" in fc
         assert cmd[cmd.index("-c:v") + 1] == "libx264"
         assert cmd[cmd.index("-movflags") + 1] == "+faststart"
 
@@ -233,6 +234,7 @@ class TestRenderWorkDirCleanup:
         opts = PipelineOptions(video=video, output=out, burn_subs=False)
 
         with patch("cleancut.pipeline.apply_cuts"), \
+             patch("cleancut.pipeline.probe_duration", return_value=10.0), \
              patch("cleancut.pipeline.apply_mutes_and_subs"):
             render(edl, [], opts, Config.load_defaults())
 

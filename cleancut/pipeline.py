@@ -15,6 +15,8 @@ from cleancut.editor import (
     apply_cuts,
     apply_mutes_and_subs,
     edl_to_ranges,
+    normalize_cuts,
+    probe_duration,
     shift_ranges_after_cuts,
 )
 from cleancut.scenes import Shot
@@ -461,6 +463,8 @@ def render(
 
     try:
         cuts = edl_to_ranges(edl, "cut")
+        if cuts:
+            cuts = normalize_cuts(cuts, probe_duration(opts.video))
         mutes = edl_to_ranges(edl, "mute")
         encoder = config.resolved_encoder(opts.video)
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
@@ -479,6 +483,7 @@ def render(
                 speech_clips = prepare_replacements(
                     opts.video, edl, subs, config, work / "speech",
                     audio_index=audio_index,
+                    cuts=cuts,
                     cache_dir=opts.edl_in.parent / "speech" if opts.edl_in else None,
                 )
 
