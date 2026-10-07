@@ -21,7 +21,7 @@ PRESETS = {
         "visual_sample_seconds": 1.0,
         "visual_threshold": 0.55,
         "nudity_model": "fast",
-        "nudity_strong_threshold": 0.85,
+        "nudity_strong_threshold": 0.90,
         "nudity_rescan_fps": 4.0,
         "snap_cuts_to_scenes": False,
         "whisper_model": "base",
@@ -37,7 +37,7 @@ PRESETS = {
         "visual_sample_seconds": 0.5,
         "visual_threshold": 0.45,
         "nudity_model": "accurate",
-        "nudity_strong_threshold": 0.80,
+        "nudity_strong_threshold": 0.90,
         "nudity_rescan_fps": 6.0,
         "snap_cuts_to_scenes": True,
         "whisper_model": "small",
@@ -54,7 +54,7 @@ PRESETS = {
         "visual_sample_seconds": 0.25,
         "visual_threshold": 0.35,
         "nudity_model": "accurate",
-        "nudity_strong_threshold": 0.70,
+        "nudity_strong_threshold": 0.90,
         "nudity_rescan_fps": 10.0,
         "snap_cuts_to_scenes": True,
         "whisper_model": "large-v3",
@@ -96,10 +96,12 @@ class Config:
     visual_threshold: float = 0.45
     # Accurate uses the official 640m model; fast uses bundled 320n.
     nudity_model: str = "accurate"
-    nudity_strong_threshold: float = 0.80
+    nudity_strong_threshold: float = 0.90
+    # Repetition of a weak prediction is not independent confirmation.
+    nudity_confirmation_threshold: float = 0.75
     nudity_rescan_fps: float = 6.0
     nudity_rescan_window_seconds: float = 2.0
-    nudity_min_confirmations: int = 2
+    nudity_min_confirmations: int = 3
     nudity_batch_size: int = 8
     nudity_coreml: bool = True
     nudity_temporal_padding_seconds: float = 0.5
@@ -113,6 +115,9 @@ class Config:
     snap_cuts_to_scenes: bool = True
     # Pad mute/cut ranges by this many seconds on each side so cuts feel natural.
     pad_seconds: float = 0.15
+    # Word endings are often underestimated by Whisper. Stop at the next
+    # known word onset so the guard does not consume the following dialogue.
+    word_end_padding_ms: int = 200
     # Merge adjacent ranges closer than this.
     merge_gap_seconds: float = 0.5
     # Whisper: model name, device (None = autodetect), word-level timestamps.

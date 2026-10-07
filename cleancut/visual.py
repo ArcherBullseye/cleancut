@@ -1,14 +1,14 @@
 """Local, two-pass nudity detection using NudeNet.
 
 The first pass scans the full video at a configurable cadence. Every possible
-explicit-content hit opens a short dense-rescan window. A window is accepted
-when it contains repeated hits or one high-confidence hit. This catches brief
-nudity inside long shots without letting isolated borderline detections create
-cuts.
+explicit-content hit opens a short dense-rescan window. Automatic cuts need
+repeated confident hits of the same class or one very strong hit. Repeated
+weak predictions remain unselected review suggestions, never automatic cuts.
 """
 
 from __future__ import annotations
 
+import math
 import platform
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -31,11 +31,15 @@ EXPLICIT_CLASSES = {
 
 
 def _explicit_hits(detections, threshold: float) -> list[dict]:
-    return [
-        d for d in detections
-        if d.get("class") in EXPLICIT_CLASSES
-        and float(d.get("score", 0)) >= threshold
-    ]
+    hits = []
+    for d in detections:
+        try:
+            score = float(d.get("score", 0))
+            if d.get("class") in EXPLICIT_CLASSES and math.isfinite(score) and threshold <= score <= 1:
+                hits.append(d)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return hits
 
 
 def _is_explicit(detections, threshold: float) -> bool:
@@ -119,6 +123,10 @@ def _iter_sampled_frames(cap, fps: float, samples: Iterable[tuple[float, float]]
     pos = 0
     for t, payload in samples:
         target = round(t * fps)
+        if target < pos:
+            # Two nearby timestamps can address the same decoded frame.
+            # Counting the next frame under that timestamp invents support.
+            continue
         while pos < target:
             if not cap.grab():
                 return
@@ -219,30 +227,54 @@ def _confirmed_edl(
 
     edl = EditDecisionList()
     for cluster in clusters:
-        scores = [float(hit.get("score", 0)) for _, hits in cluster for hit in hits]
-        if not scores:
-            continue
-        strongest = max(scores)
-        if (
-            strongest < config.nudity_strong_threshold
-            and len(cluster) < max(1, config.nudity_min_confirmations)
-        ):
-            continue
+        strongest = max(float(hit["score"]) for _, hits in cluster for hit in hits)
         classes = sorted({str(hit["class"]) for _, hits in cluster for hit in hits})
         pad = max(0.0, config.nudity_temporal_padding_seconds)
-        edl.add(EditDecision(
-            start=max(0.0, cluster[0][0] - pad),
-            end=min(duration, cluster[-1][0] + pad),
-            action=action,
-            category="nudity",
-            reason=(
-                f"temporal NudeNet confirmation ({len(cluster)} samples, "
-                f"max {strongest:.2f}, {getattr(detector, '_cleancut_model', 'NudeNet')}/"
-                f"{getattr(detector, '_cleancut_backend', 'CPU')}): {', '.join(classes)}"
-            ),
-            source="visual",
-        ))
+        backend = (f"{getattr(detector, '_cleancut_model', 'NudeNet')}/"
+                   f"{getattr(detector, '_cleancut_backend', 'CPU')}")
+        confirmed = False
+        for category in classes:
+            # Count distinct sampled frames, not boxes. Different anatomy
+            # classes and a long series of low scores cannot confirm each other.
+            qualified = []
+            for t, hits in cluster:
+                score = max((float(h["score"]) for h in hits if h["class"] == category), default=0)
+                if score >= min(config.nudity_confirmation_threshold, config.nudity_strong_threshold):
+                    qualified.append((t, score))
+            runs: list[list[tuple[float, float]]] = []
+            for hit in qualified:
+                if runs and hit[0] - runs[-1][-1][0] <= config.nudity_max_gap_seconds:
+                    runs[-1].append(hit)
+                else:
+                    runs.append([hit])
+            for run in runs:
+                peak = max(score for _, score in run)
+                enough = sum(score >= config.nudity_confirmation_threshold for _, score in run)
+                if peak < config.nudity_strong_threshold and enough < max(2, config.nudity_min_confirmations):
+                    continue
+                confirmed = True
+                edl.add(EditDecision(
+                    start=max(0.0, run[0][0] - pad), end=min(duration, run[-1][0] + pad),
+                    action=action, category="nudity", source="visual",
+                    reason=(f"confident NudeNet confirmation ({len(run)} samples, max {peak:.2f}, "
+                            f"{backend}): {category}"),
+                ))
+        if not confirmed and (len(cluster) >= 2 or strongest >= config.nudity_confirmation_threshold):
+            edl.add(EditDecision(
+                start=max(0.0, cluster[0][0] - pad), end=min(duration, cluster[-1][0] + pad),
+                action=action, category="nudity", source="visual", accepted=False,
+                reason=(f"[needs review; not auto-cut] weak NudeNet evidence ({len(cluster)} samples, "
+                        f"max {strongest:.2f}, {backend}): {', '.join(classes)}"),
+            ))
     return edl
+
+
+def _observations_by_frame(samples, fps: float) -> dict[float, list[dict]]:
+    """Coarse/dense timestamps hitting the same decoded frame count only once."""
+    frames: dict[int, list[dict]] = {}
+    for t, detections in samples:
+        frames.setdefault(round(t * fps), []).extend(detections)
+    return {frame / fps: detections for frame, detections in frames.items()}
 
 
 def scan_video(
@@ -263,14 +295,17 @@ def scan_video(
             "last": (shots[-1].start, shots[-1].end),
         }
     cache_hash = _cache.config_hash(
-        version=2,
+        version=3,
         model=model.name,
         threshold=config.visual_threshold,
         strong_threshold=config.nudity_strong_threshold,
+        confirmation_threshold=config.nudity_confirmation_threshold,
         sample_seconds=config.visual_sample_seconds,
         rescan_fps=config.nudity_rescan_fps,
         rescan_window=config.nudity_rescan_window_seconds,
         min_confirmations=config.nudity_min_confirmations,
+        max_gap=config.nudity_max_gap_seconds,
+        temporal_padding=config.nudity_temporal_padding_seconds,
         batch_size=config.nudity_batch_size,
         action=config.actions.get("nudity", "cut"),
         shots=shot_fingerprint,
@@ -313,14 +348,15 @@ def scan_video(
             cap.release()
         # Keep coarse observations too: a high-confidence hit must not disappear
         # merely because the decoder returns a neighboring frame during rescan.
-        observations = {round(t, 3): detections for t, detections in dense}
-        for t, detections in coarse:
-            if _is_explicit(detections, config.visual_threshold):
-                observations[round(t, 3)] = detections
+        observations = _observations_by_frame([*dense, *coarse], fps)
         edl = _confirmed_edl(
             observations, duration, config,
             config.actions.get("nudity", "cut"), detector,
         )
+        review_count = sum(not d.accepted for d in edl)
+        if review_count:
+            print(f"Nudity scan: {review_count} low-confidence suggestion(s) need review; "
+                  "they will not be cut unless accepted.", flush=True)
 
     if use_cache:
         _cache.save(video_path, "nudenet", cache_hash, {

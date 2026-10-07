@@ -52,6 +52,11 @@
 
   <details class="advanced">
     <summary>Advanced</summary>
+    <label class="inline">Word ending buffer (milliseconds)
+      <input type="number" id="word-end-padding-ms" value="200" min="0" max="500" step="10">
+    </label>
+    <p class="muted small">Extends censorship after the flagged word, up to the next
+      word's detected start. Increase this if an ending remains audible. Applies to new scans.</p>
     <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
     <label class="check"><input type="checkbox" id="use-local-ai" checked> Use local Ollama AI for dialogue context and scene vision</label>
     <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow non-nudity VLM-only cuts without corroboration</label>
@@ -65,7 +70,8 @@
     <button id="start-scan" class="primary">Start scan</button>
     <button id="cancel-pick" class="ghost">Cancel</button>
   </div>
-  <p class="muted small">Scans run one at a time on the server. You can close this page -- progress is kept.</p>
+  <p class="muted small">Scans run one at a time on the server. You can close this page -- progress is kept.
+    Low-confidence nudity suggestions are unselected for review and are not included in automatic renders.</p>
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='library.js', v=version) }}"></script>{% endblock %}

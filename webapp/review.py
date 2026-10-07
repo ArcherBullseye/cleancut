@@ -102,6 +102,9 @@ def summarize(data: dict[str, Any]) -> dict[str, Any]:
         "cuts": len(cuts),
         "mutes": len(mutes),
         "replacements": len(replacements),
+        "nudity_review": sum(not d.get("accepted", True) and
+                             str(d.get("reason", "")).startswith("[needs review;")
+                             for d in decisions),
         "seconds_cut": round(sum(d["end"] - d["start"] for d in cuts), 1),
         "seconds_muted": round(sum(d["end"] - d["start"] for d in mutes), 1),
         "seconds_replaced": round(sum(d["end"] - d["start"] for d in replacements), 1),

@@ -328,6 +328,7 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         "--prefer-language", opts.get("prefer_language") or "eng",
     ]
     cmd += _category_flags(opts)
+    cmd += ["--word-end-padding-ms", str(opts.get("word_end_padding_ms", 200))]
     cmd += _ollama_flags(opts, job["preset"])
     if opts.get("use_audio_events") is False:
         cmd.append("--no-audio-events")

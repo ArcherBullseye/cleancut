@@ -67,9 +67,11 @@ copy. A custom mounted location can be added with `CLEANCUT_MEDIA_ROOTS`.
   (99 MB), is checksum-verified, and thereafter runs fully locally. CleanCut
   requests CoreML on Apple Silicon and automatically falls back to local CPU
   inference if a model/operator is unsupported.
-- Possible nudity is rescanned at a higher frame rate. Repeated medium-confidence
-  hits or a single strong explicit hit create the cut, so brief or silent nudity
-  is no longer lost inside a long shot or rejected for lacking dialogue.
+- Possible nudity is rescanned at a higher frame rate. Automatic NudeNet cuts
+  need three same-class samples scoring at least 0.75 or one scoring at least
+  0.90. Repeated weaker predictions are unselected review suggestions. Nudity
+  does not require dialogue, and these cuts keep their temporal margins instead
+  of expanding to entire shots.
 - Local AI defaults to Ollama at `127.0.0.1:11434`. The same `qwen3.5:9b`
   model handles dialogue context and visual scene classification; CleanCut
   requests non-thinking JSON output so scans do not spend time generating
@@ -179,8 +181,9 @@ skipped. The service clones a containing 3–12 second utterance, so very short
 subtitle lines and explicitly marked multi-speaker lines fall back to mute.
 Generated audio is silence-trimmed, level-matched, pitch-preserving
 time-stretched within a conservative range, and faded at the joins. It cannot
-extend into neighboring dialogue. Word mutes now have at most a 40 ms boundary
-guard, and separate word mutes no longer swallow the gap between them.
+extend into neighboring dialogue. Word censorship has a 40 ms leading guard
+and a configurable ending guard (200 ms by default), capped at the following
+word's detected start. Speech synthesis retains the original word duration.
 Compatible video is still stream-copied. Long lists are batched to avoid
 opening hundreds of WAV files at once.
 
@@ -222,6 +225,39 @@ After updating and restarting CleanCut, re-render the existing scan of the
 this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
+
+## Word endings and false nudity cuts (beta.11)
+
+New scans add up to **200 ms after each word** so underestimated Whisper word
+endings are not audible. In the scan form's **Advanced** options, **Word ending
+buffer** can be set from 0 to 500 ms. This choice is remembered for future jobs.
+The guard stops at the next detected word onset; overlapping or inaccurate
+Whisper timestamps can still require manual trimming in review. It applies to
+Mute, Replace (including its mute fallback), and word Cut decisions. The
+unpadded word timing remains the synthesis target, and optional background
+separation covers the enlarged mute interval.
+
+NudeNet now distinguishes weak candidates from confirmed automatic cuts. A
+large count of scores around 0.5–0.65 cannot turn a weak prediction into an
+automatic cut. Confirmation requires three nearby frames of the same exposed
+anatomy class scoring at least 0.75, or a single frame scoring at least 0.90.
+Multiple boxes or coarse/dense samples of the same decoded frame count once.
+Weak repeated results remain **review only**, unselected; accept them only if
+preview shows actual nudity. Unselected suggestions are not removed by an
+automatic render. These thresholds reduce automatic false positives, but do
+not guarantee detection of every instance of nudity.
+
+NudeNet cuts and word cuts no longer snap to whole shots. Unselected suggestions
+cannot merge into or enlarge accepted edits. The visual cache version changed
+so a new scan recomputes NudeNet decisions using the new rules; Whisper's cached
+transcript can still be reused.
+
+After updating, **scan the original video again and then render**. Re-rendering
+an old scan alone retains its saved word endpoints and accepted nudity cuts.
+No new AI models or installers are needed. Regression tests use the reported
+Leverage S01E05 score/sample-count patterns and synthetic audio with a word
+ending 160 ms after its transcript endpoint; the episode footage itself has
+not been evaluated here.
 
 ## Job-specific actions (beta.10)
 

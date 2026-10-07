@@ -35,6 +35,8 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("visual_sample_seconds", "visual_sample_seconds"),
     ("nudity_model", "nudity_model"),
     ("nudity_strong_threshold", "nudity_strong_threshold"),
+    ("nudity_confirmation_threshold", "nudity_confirmation_threshold"),
+    ("word_end_padding_ms", "word_end_padding_ms"),
     ("nudity_rescan_fps", "nudity_rescan_fps"),
     ("visual_min_streak", "visual_min_streak"),
     ("visual_shot_hit_fraction", "visual_shot_hit_fraction"),
@@ -154,6 +156,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Local NudeNet model: accurate 640m or bundled fast 320n.")
     p.add_argument("--nudity-strong-threshold", type=float, default=None,
                    help="Confidence at which one explicit hit is enough after rescan.")
+    p.add_argument("--nudity-confirmation-threshold", type=float, default=None,
+                   help="Minimum confidence for each repeated same-class nudity confirmation (default: .75).")
+    p.add_argument("--word-end-padding-ms", type=int, choices=range(0, 501), metavar="0..500", default=None,
+                   help="Extra protection after a flagged word, capped at the next word onset (default: 200 ms).")
     p.add_argument("--nudity-rescan-fps", type=float, default=None,
                    help="Frames/second used to confirm possible nudity.")
     p.add_argument("--visual-min-streak", type=int, default=None,

@@ -55,8 +55,12 @@ Wordlist and context matching, Whisper speech-to-text when there is no subtitle
 track, density clustering, NudeNet frame analysis, Ollama LLM dialogue
 classification, local VLM scene analysis, and HuggingFace AST audio events.
 Non-nudity VLM judgments require a second corroborating signal before they
-fire. Explicit nudity from NudeNet or the VLM is retained because nudity is
-often silent. Cuts snap to shot boundaries.
+fire. NudeNet automatic cuts require three same-class frames at confidence
+0.75+ or one at 0.90+; repeated weaker results remain unselected for review.
+Nudity can be silent and does not require dialogue. Broad scene cuts can snap
+to shot boundaries; NudeNet and word cuts retain their precise ranges.
+Word censorship adds a configurable ending buffer (200 ms by default), stopping
+at the next detected word. See [beta.11 changes](MACOS.md#word-endings-and-false-nudity-cuts-beta11).
 
 ## Presets
 

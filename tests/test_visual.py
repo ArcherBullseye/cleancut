@@ -29,8 +29,8 @@ MODEL = NudityModel("test-640m", Path("/tmp/test.onnx"), 640)
 def _config(**values) -> Config:
     config = Config.load_defaults()
     config.visual_threshold = 0.45
-    config.nudity_strong_threshold = 0.80
-    config.nudity_min_confirmations = 2
+    config.nudity_strong_threshold = 0.90
+    config.nudity_min_confirmations = 3
     config.nudity_temporal_padding_seconds = 0.5
     config.nudity_coreml = False
     for key, value in values.items():
@@ -99,12 +99,13 @@ def test_single_strong_hit_is_accepted():
     assert edl.decisions[0].source == "visual"
 
 
-def test_two_nearby_medium_hits_are_accepted():
+def test_two_nearby_medium_hits_are_review_only():
     detector = SimpleNamespace()
     edl = _confirmed_edl(
         {5.0: MEDIUM_HIT, 5.2: MEDIUM_HIT}, 20.0, _config(), "cut", detector
     )
     assert len(edl.decisions) == 1
+    assert not edl.decisions[0].accepted
     assert "2 samples" in edl.decisions[0].reason
 
 

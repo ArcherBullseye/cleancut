@@ -15,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.10")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.11")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -137,6 +137,9 @@ def api_scan():
     ):
         return _bad("Unknown actions. Replace is only supported for profanity words.")
     actions = {**cfg["actions"], **actions}
+    word_padding = body.get("word_end_padding_ms", cfg["word_end_padding_ms"])
+    if type(word_padding) is not int or not 0 <= word_padding <= 500:
+        return _bad("Word ending buffer must be between 0 and 500 milliseconds.")
 
     local_ai = bool(body.get("use_local_ai", cfg["local_ai_enabled"]))
     options: dict[str, Any] = {
@@ -151,6 +154,7 @@ def api_scan():
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
         "use_visual": bool(body.get("use_visual", cfg["use_visual"])),
         "allow_solo_visual": bool(body.get("allow_solo_visual", cfg["allow_solo_visual"])),
+        "word_end_padding_ms": word_padding,
         "analysis_height": cfg["analysis_height"],
         "analysis_proxy": cfg["analysis_proxy"],
         "nudity_model": cfg["nudity_model"],
@@ -171,6 +175,7 @@ def api_scan():
         "prefer_language": options["prefer_language"], "auto_render": options["auto_render"],
         "local_ai_enabled": local_ai, "use_visual": options["use_visual"],
         "allow_solo_visual": options["allow_solo_visual"],
+        "word_end_padding_ms": word_padding,
     })
     return jsonify({"ok": True, "job_id": job_id})
 

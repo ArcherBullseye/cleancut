@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
@@ -88,18 +89,27 @@ class EditDecisionList:
         """Both actions remove original speech; replacement overlays are optional."""
         return [d for d in self.decisions if d.action in {"mute", "replace"} and d.accepted]
 
-    def pad(self, seconds: float) -> EditDecisionList:
+    def pad(self, seconds: float, *, word_end_padding_ms: int = 200) -> EditDecisionList:
         out = []
         for d in self.decisions:
-            # Word-timed mutes need only a short boundary guard, not scene
-            # padding that can silence the next/previous spoken word.
-            padding = min(seconds, 0.04) if (
-                d.action in {"mute", "replace"} and d.source == "whisper-word" and d.word_edits
-            ) else seconds
+            word_timed = d.source == "whisper-word" and bool(d.word_edits)
+            padding = min(seconds, 0.04) if word_timed else seconds
+            end = d.end + padding
+            if word_timed:
+                # Keep unpadded word timings for synthesis; only censorship
+                # receives this guard. Anchor it to the last word, not an
+                # already padded decision, so repeated padding cannot grow it.
+                last_word = max(d.word_edits, key=lambda w: float(w["end"]))
+                word_end = float(last_word["end"])
+                end = word_end + max(0, min(500, word_end_padding_ms)) / 1000
+                following = last_word.get("next_word_start")
+                if following is not None and math.isfinite(float(following)):
+                    end = min(end, max(word_end, float(following)))
+                end = max(d.end, end)
             out.append(
                 EditDecision(
                     start=max(0.0, d.start - padding),
-                    end=d.end + padding,
+                    end=end,
                     action=d.action,
                     category=d.category,
                     reason=d.reason,
@@ -117,7 +127,9 @@ class EditDecisionList:
         if not self.decisions:
             return EditDecisionList(video_path=self.video_path, subtitle_path=self.subtitle_path)
         ranked = _ACTION_STRENGTH
-        items = sorted(self.decisions, key=lambda d: d.start)
+        # Review-only suggestions must never enlarge or change an accepted
+        # edit. Merge each acceptance state independently, then restore time order.
+        items = sorted(self.decisions, key=lambda d: (not d.accepted, d.start))
         # Copy before extending in place — callers' decision objects (e.g. ones
         # loaded from an EDL file) must not be silently modified.
         merged: list[EditDecision] = [replace(items[0])]
@@ -131,7 +143,7 @@ class EditDecisionList:
             different_audio = {d.action, last.action} == {"mute", "replace"}
             merge_gap = 0.0 if word_mutes or different_audio else gap
             overlaps = d.start < last.end if different_audio else d.start <= last.end + merge_gap
-            if overlaps:
+            if overlaps and d.accepted == last.accepted:
                 # Overlap or near-touching: merge.
                 new_action = last.action if ranked[last.action] >= ranked[d.action] else d.action
                 last.end = max(last.end, d.end)
@@ -147,7 +159,8 @@ class EditDecisionList:
             else:
                 merged.append(replace(d))
         return EditDecisionList(
-            decisions=merged, video_path=self.video_path, subtitle_path=self.subtitle_path
+            decisions=sorted(merged, key=lambda d: (d.start, d.end)),
+            video_path=self.video_path, subtitle_path=self.subtitle_path
         )
 
     def to_json(self, path: Path) -> None:
@@ -179,9 +192,9 @@ class EditDecisionList:
 
 
 def snap_edl_to_shots(edl: EditDecisionList, shots: list["Shot"]) -> EditDecisionList:
-    """Extend each `cut` decision outward to enclosing shot boundaries.
+    """Snap broad accepted scene cuts, retaining temporal/word precision.
 
-    Mutes are left alone — they're audio-only and should be word-precise.
+    NudeNet ranges, word edits, and unselected suggestions are left alone.
     """
     if not shots:
         return edl
@@ -189,7 +202,11 @@ def snap_edl_to_shots(edl: EditDecisionList, shots: list["Shot"]) -> EditDecisio
 
     out: list[EditDecision] = []
     for d in edl.decisions:
-        if d.action == "cut":
+        # NudeNet already supplies temporal margins; snapping can turn a
+        # brief mistaken detection into an entire missing shot. Word cuts
+        # likewise need to retain word precision.
+        precise = bool(set(d.source.split("+")) & {"visual", "visual-shot", "visual-temporal", "whisper-word"})
+        if d.action == "cut" and d.accepted and not precise:
             ns, ne = snap_range_to_shots(d.start, d.end, shots)
             out.append(
                 EditDecision(

@@ -14,6 +14,7 @@ async function loadSettings() {
   document.getElementById("use-local-ai").checked = !!currentSettings.local_ai_enabled;
   document.getElementById("use-visual").checked = !!currentSettings.use_visual;
   document.getElementById("allow-solo-visual").checked = !!currentSettings.allow_solo_visual;
+  document.getElementById("word-end-padding-ms").value = currentSettings.word_end_padding_ms;
 }
 
 function renderListing(data) {
@@ -92,6 +93,7 @@ async function startScan() {
       use_local_ai: document.getElementById("use-local-ai").checked,
       allow_solo_visual: document.getElementById("allow-solo-visual").checked,
       auto_render: document.getElementById("auto-render").checked,
+      word_end_padding_ms: Number(document.getElementById("word-end-padding-ms").value),
     };
     const res = await post("/api/scan", body);
     window.location.href = `/job/${res.job_id}`;

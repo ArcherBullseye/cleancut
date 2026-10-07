@@ -36,7 +36,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         "path": str(first), "preset": "fast", "categories": ["profanity", "nudity"],
         "actions": {"profanity": "replace", "nudity": "cut"}, "prefer_language": "fra",
         "auto_render": True, "use_visual": False, "use_local_ai": False,
-        "allow_solo_visual": True,
+        "allow_solo_visual": True, "word_end_padding_ms": 300,
     }
     with patch("webapp.app.library.resolve_safe", side_effect=lambda path: first if path == str(first) else second):
         response = local_jobs.post("/api/scan", json=choices)
@@ -47,6 +47,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert remembered["categories"] == choices["categories"]
         assert remembered["preset"] == "fast" and remembered["prefer_language"] == "fra"
         assert remembered["auto_render"] and remembered["allow_solo_visual"]
+        assert remembered["word_end_padding_ms"] == 300
         assert not remembered["use_visual"] and not remembered["local_ai_enabled"]
         # A fresh read from disk / restarted job database retains defaults.
         jobs.init_db()
@@ -57,6 +58,9 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert second_opts["categories"] == choices["categories"]
         assert not second_opts["use_visual"] and not second_opts["use_llm"]
         assert second_opts["auto_render"]
+        assert second_opts["word_end_padding_ms"] == 300
+        command = jobs.build_scan_command(second_job)
+        assert command[command.index("--word-end-padding-ms") + 1] == "300"
     settings.save({"actions": {"profanity": "mute"}})
     assert json.loads(jobs.get_job(job_id)["options"])["actions"]["profanity"] == "replace"
 
@@ -64,6 +68,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
 @pytest.mark.parametrize("body", [
     {"actions": {"nudity": "replace"}}, {"actions": {"profanity": "bogus"}},
     {"actions": []}, {"categories": ["bogus"]}, {"categories": None},
+    {"word_end_padding_ms": 501}, {"word_end_padding_ms": -1}, {"word_end_padding_ms": "200"},
 ])
 def test_invalid_scan_choices_do_not_persist(local_jobs, tmp_path, body):
     video = tmp_path / "movie.mp4"
@@ -139,7 +144,7 @@ def test_scan_and_cli_emit_explicit_replace_with_word_precision(cli_args):
     edl = scan_words([Word(1, 1.3, "damn")], config).pad(.15).merge_overlapping(.5)
     assert edl.decisions[0].action == "replace"
     assert edl.decisions[0].start == pytest.approx(.96)
-    assert edl.decisions[0].end == pytest.approx(1.34)
+    assert edl.decisions[0].end == pytest.approx(1.5)
     assert edl.decisions[0].word_edits
     flags = jobs._category_flags({"categories": ["profanity"], "actions": {"profanity": "replace"}})
     assert "profanity=replace" in flags

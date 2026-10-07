@@ -330,6 +330,8 @@ def scan_words(words, config: Config) -> EditDecisionList:
                     "text_before": text,
                     "text_after": soften_text(text, config.replacements, config.wordlists),
                     "category": category,
+                    "next_word_start": (words[i + final_offset + 1].start
+                                        if i + final_offset + 1 < n else None),
                 }],
             )
         )

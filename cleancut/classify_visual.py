@@ -120,7 +120,8 @@ def select_shots(
     modes = set(params.mode.split("+"))
     dialogue = _ranges_with_dialogue(subs) if "silent" in modes else []
     flagged = [
-        (d.start, d.end) for d in existing_edl.decisions if d.action in ("mute", "replace", "cut")
+        (d.start, d.end) for d in existing_edl.decisions
+        if d.accepted and d.action in ("mute", "replace", "cut")
     ] if "gaps" in modes else []
 
     out: list[Shot] = []

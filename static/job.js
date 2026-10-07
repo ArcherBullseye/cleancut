@@ -101,6 +101,9 @@ function renderSummary(summary) {
     note.textContent = summary.cuts > 0
       ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut avoids that unless the source format needs conversion for playback.`
       : "No cuts accepted. Compatible H.264/HEVC video can be copied; audio replacement/separation may still take time. Other formats are converted for macOS/browser playback.";
+    if (summary.nudity_review) {
+      note.textContent += ` ${summary.nudity_review} uncertain nudity suggestion(s) are unselected and will remain in the output. Preview them and accept any that show actual nudity.`;
+    }
   }
 }
 
@@ -173,7 +176,8 @@ function decisionCard(decision) {
   const body = el("div", { class: "body" }, [
     el("div", { class: "head" }, [
       el("span", { class: "time", text: `${decision.start_label} – ${decision.end_label}` }),
-      el("span", { class: `tag ${decision.action}`, text: decision.action }),
+      el("span", { class: `tag ${decision.action}`, text:
+        !accepted && (decision.reason || "").startsWith("[needs review;") ? "review only" : decision.action }),
       el("span", { class: "tag", text: decision.category || "?" }),
       el("span", { class: "tag", text: decision.source || "?" }),
       el("span", { class: "muted small", text: `${decision.duration.toFixed(1)}s` }),

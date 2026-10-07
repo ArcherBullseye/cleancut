@@ -100,6 +100,7 @@ def test_word_mute_padding_and_merging_do_not_silence_surrounding_words():
     # Simulate raw scan intervals before the pipeline's padding pass.
     first = replace(first, start=1, end=1.3)
     second = replace(second, start=1.5, end=1.8)
+    first.word_edits[0]["next_word_start"] = 1.35  # an unflagged word between these two
     padded = EditDecisionList(decisions=[first, second]).pad(.15).merge_overlapping(.5)
     assert len(padded.decisions) == 2
     assert padded.decisions[0].end < 1.4 < padded.decisions[1].start

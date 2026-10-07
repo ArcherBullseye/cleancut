@@ -326,7 +326,8 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
         )
         edl.extend(visual_decisions)
 
-    edl = edl.pad(config.pad_seconds).merge_overlapping(gap=config.merge_gap_seconds).sorted()
+    edl = edl.pad(config.pad_seconds, word_end_padding_ms=config.word_end_padding_ms)
+    edl = edl.merge_overlapping(gap=config.merge_gap_seconds).sorted()
 
     # LLM-based contextual dialogue classification.
     if config.llm_enabled and subs:

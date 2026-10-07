@@ -64,6 +64,7 @@ DEFAULTS: dict[str, Any] = {
     "auto_render": False,
     "use_visual": True,
     "allow_solo_visual": False,
+    "word_end_padding_ms": 200,
     "preserve_background": False,
     "speech_host": os.environ.get("CLEANCUT_SPEECH_HOST", "http://127.0.0.1:8765"),
     "speech_model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
@@ -151,6 +152,8 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
                     value = max(360, min(1080, int(value)))
                 except (TypeError, ValueError):
                     continue
+            if key == "word_end_padding_ms" and (type(value) is not int or not 0 <= value <= 500):
+                continue
             if isinstance(DEFAULTS[key], dict) and isinstance(value, dict):
                 current[key].update(value)
             else:
