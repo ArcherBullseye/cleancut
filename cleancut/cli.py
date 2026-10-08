@@ -159,7 +159,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--nudity-confirmation-threshold", type=float, default=None,
                    help="Minimum confidence for each repeated same-class nudity confirmation (default: .75).")
     p.add_argument("--word-end-padding-ms", type=int, choices=range(0, 501), metavar="0..500", default=None,
-                   help="Extra protection after a flagged word, capped at the next word onset (default: 200 ms).")
+                   help="Extra protection after a flagged word; may trim closely following speech (default: 200 ms).")
     p.add_argument("--nudity-rescan-fps", type=float, default=None,
                    help="Frames/second used to confirm possible nudity.")
     p.add_argument("--visual-min-streak", type=int, default=None,

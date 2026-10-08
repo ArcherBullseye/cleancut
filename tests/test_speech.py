@@ -95,15 +95,15 @@ def test_merging_retains_multiple_words_without_mutating_input():
     assert len(first.word_edits) == 1
 
 
-def test_word_mute_padding_and_merging_do_not_silence_surrounding_words():
-    first, second = word_decision(1, 1.3), word_decision(1.5, 1.8)
+def test_word_mute_padding_and_merging_do_not_fill_gaps_beyond_the_guard():
+    first, second = word_decision(1, 1.3), word_decision(1.8, 2.1)
     # Simulate raw scan intervals before the pipeline's padding pass.
     first = replace(first, start=1, end=1.3)
-    second = replace(second, start=1.5, end=1.8)
-    first.word_edits[0]["next_word_start"] = 1.35  # an unflagged word between these two
+    second = replace(second, start=1.8, end=2.1)
+    first.word_edits[0]["next_word_start"] = 1.6  # an unflagged word between these two
     padded = EditDecisionList(decisions=[first, second]).pad(.15).merge_overlapping(.5)
     assert len(padded.decisions) == 2
-    assert padded.decisions[0].end < 1.4 < padded.decisions[1].start
+    assert padded.decisions[0].end < 1.6 < padded.decisions[1].start
     assert abs(padded.decisions[0].start - .96) < .001
 
 

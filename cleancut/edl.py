@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
@@ -102,9 +101,9 @@ class EditDecisionList:
                 last_word = max(d.word_edits, key=lambda w: float(w["end"]))
                 word_end = float(last_word["end"])
                 end = word_end + max(0, min(500, word_end_padding_ms)) / 1000
-                following = last_word.get("next_word_start")
-                if following is not None and math.isfinite(float(following)):
-                    end = min(end, max(word_end, float(following)))
+                # Both endpoints are Whisper estimates. A touching/overlapping
+                # next-word onset often includes the tail we're trying to mute;
+                # capping here silently cancelled the user's ending buffer.
                 end = max(d.end, end)
             out.append(
                 EditDecision(

@@ -18,8 +18,8 @@ from cleancut.visual import _confirmed_edl, _iter_sampled_frames, _observations_
 
 
 @pytest.mark.parametrize("action", ["mute", "replace", "cut"])
-@pytest.mark.parametrize("following,expected", [(1.8, 1.4), (1.28, 1.28), (1.2, 1.2), (None, 1.4)])
-def test_word_ending_guard_protects_tail_without_consuming_next_word(action, following, expected):
+@pytest.mark.parametrize("following", [1.8, 1.28, 1.2, 1.1, None])
+def test_word_ending_guard_cannot_be_cancelled_by_uncertain_next_word(action, following):
     cfg = Config.load_defaults()
     cfg.actions["profanity"] = action
     words = [Word(1, 1.2, "fuck")]
@@ -28,7 +28,7 @@ def test_word_ending_guard_protects_tail_without_consuming_next_word(action, fol
     edl = scan_words(words, cfg).pad(.15)
     d = edl.decisions[0]
     assert d.start == pytest.approx(.96)
-    assert d.end == pytest.approx(expected)
+    assert d.end == pytest.approx(1.4)
     assert d.word_edits[0]["end"] == 1.2  # synthesized word length isn't stretched by the guard
     assert d.word_edits[0]["next_word_start"] == following
 
@@ -126,7 +126,8 @@ def test_precise_cuts_are_not_expanded_to_entire_shots(source):
 
 
 @pytest.mark.parametrize("action", ["mute", "replace"])
-def test_real_render_silences_underestimated_word_tail_after_cut(tmp_path, action):
+@pytest.mark.parametrize("next_word_timestamp", [1.6, 1.2])
+def test_real_render_silences_underestimated_word_tail_after_cut(tmp_path, action, next_word_timestamp):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("Requires FFmpeg")
     from cleancut.pipeline import PipelineOptions, render
@@ -149,7 +150,9 @@ def test_real_render_silences_underestimated_word_tail_after_cut(tmp_path, actio
     cfg = Config.load_defaults()
     cfg.encoder, cfg.render_validation = "libx264", "full"
     cfg.actions["profanity"] = action
-    edl = scan_words([Word(1, 1.2, "fuck"), Word(1.6, 2.4, "that")], cfg).pad(.15)
+    # Whisper can assign the remaining phoneme to the next word. Its onset
+    # must not cancel the ending guard even though that timestamp is contiguous.
+    edl = scan_words([Word(1, 1.2, "fuck"), Word(next_word_timestamp, 2.4, "that")], cfg).pad(.15)
     edl.add(EditDecision(.2, .4, "cut", "nudity"))
     out = tmp_path / "clean.mp4"
     with patch("cleancut.speech.check_service", side_effect=OSError("offline")):

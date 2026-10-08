@@ -23,7 +23,7 @@ from cleancut.speech import SpeechClip, _run_ffmpeg
 
 MODEL_FILE = "955717e8-8726e21a.th"
 MODEL_URL = "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/" + MODEL_FILE
-ALGORITHM = "htdemucs-residual-tiny-speech-guard-v1"
+ALGORITHM = "htdemucs-nonvocal-stems-strict-speech-guard-v2"
 SAMPLE_RATE = 44100
 MAX_WINDOW = 16.0
 

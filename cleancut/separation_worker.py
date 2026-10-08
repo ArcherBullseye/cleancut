@@ -1,6 +1,6 @@
 """Isolated, offline Demucs + local speech-leak guard. Never imported by render.
 
-Demucs was trained for music vocals, not cinematic dialogue. Its residual is
+Demucs was trained for music vocals, not cinematic dialogue. Its background is
 an estimate, not a guarantee: recognizable speech near an edited word rejects
 that background. Whisper can miss faint words; listening review is essential.
 """
@@ -41,7 +41,7 @@ def install(models: Path) -> None:
 
 
 def speech_detected(result: dict, start: float, end: float) -> bool:
-    """Reject ANY confidently recognized word near the censor, not just profanity.
+    """Reject ANY recognized word/fragment near the censor, not just profanity.
 
     Adjacent words/music hallucinations can conservatively cause full muting.
     Errors/malformed timestamps are rejected, never assumed clean.
@@ -63,18 +63,23 @@ def speech_detected(result: dict, start: float, end: float) -> bool:
             probability = float(word.get("probability", 1))
             if not math.isfinite(s + e + probability) or e < s:
                 raise ValueError("Invalid speech-verification timestamps")
-            if (word.get("word", "").strip() and probability >= .35
-                    and s < end + .04 and e > start - .04):
+            # Faint leaked phonemes may receive low ASR confidence.
+            # No confidence floor: uncertain speech is not evidence of silence.
+            # Allow for approximate verification timestamps at either boundary.
+            if (word.get("word", "").strip()
+                    and s < end + .15 and e > start - .15):
                 return True
     return False
 
 
-def residual(model, mix, *, apply=None):
+def separate_background(model, mix, *, apply=None):
     """Preserve original channel order, scale, and sample count.
 
     Stereo is processed as stereo. Surround channels are processed as isolated
-    mono channels (duplicated to stereo), never silently downmixed. Subtracting
-    estimated vocals from the ORIGINAL mix preserves all unestimated effects.
+    mono channels (duplicated to stereo), never silently downmixed. Sum only
+    estimated non-vocal stems. Original-minus-vocals reintroduces everything
+    the separator failed to estimate, including partially removed dialogue.
+    Using stems may lose some effects, and still needs speech verification.
     """
     import numpy as np
     import torch
@@ -82,7 +87,10 @@ def residual(model, mix, *, apply=None):
         from demucs.apply import apply_model
 
         apply = apply_model
-    foreground = np.zeros_like(mix)
+    if set(model.sources) != {"drums", "bass", "other", "vocals"}:
+        raise ValueError("Unsupported separator source layout")
+    background_indices = [model.sources.index(name) for name in ("drums", "bass", "other")]
+    background = np.zeros_like(mix)
     groups = [list(range(2))] if mix.shape[1] == 2 else [[i] for i in range(mix.shape[1])]
     torch.manual_seed(0)
     for group in groups:
@@ -100,11 +108,14 @@ def residual(model, mix, *, apply=None):
         with torch.inference_mode():
             estimate = apply(model, normalized[None], device="cpu", shifts=0,
                              split=True, overlap=.25, segment=6, progress=False)[0]
-        vocals = (estimate[model.sources.index("vocals")] * std + mean).cpu().numpy()
-        if vocals.shape != pair.shape or not np.isfinite(vocals).all():
+        if tuple(estimate.shape) != (len(model.sources), *pair.shape):
+            raise ValueError("Separator changed source or sample count")
+        # Match Demucs' per-stem denormalization; don't normalize the final bed
+        # or add a mixture-consistency residual back from the original audio.
+        bed = (estimate[background_indices] * std + mean).sum(dim=0).cpu().numpy()
+        if not np.isfinite(bed).all():
             raise ValueError("Separator changed sample count or returned invalid audio")
-        foreground[:, group] = vocals.T if len(group) == 2 else vocals.mean(axis=0)[:, None]
-    background = mix - foreground
+        background[:, group] = bed.T if len(group) == 2 else bed.mean(axis=0)[:, None]
     if not np.isfinite(background).all() or np.max(np.abs(background)) > 1.5:
         raise ValueError("Unstable background estimate")
     return background
@@ -169,7 +180,7 @@ def run(manifest: dict, model, verifier) -> None:
     for i, task in enumerate(tasks, 1):
         print(f"[cleancut] Separating background window {i}/{len(tasks)}", flush=True)
         try:
-            background = residual(model, read_window(Path(task["source"])))
+            background = separate_background(model, read_window(Path(task["source"])))
             # Check each channel independently so phase cancellation or a
             # center-only voice cannot hide dialogue in a stereo downmix.
             transcripts = []
@@ -185,7 +196,7 @@ def run(manifest: dict, model, verifier) -> None:
             for target in task["targets"]:
                 start, end = float(target["start"]), float(target["end"])
                 if any(speech_detected(t, start, end) for t in transcripts):
-                    print("[cleancut] Background rejected: recognizable speech near muted word; full mute retained.",
+                    print("[cleancut] Background rejected: possible speech near muted word; full mute retained.",
                           flush=True)
                     continue
                 write_clip(Path(target["output"]), background, start, end)

@@ -24,7 +24,13 @@ from cleancut.background import (
 from cleancut.config import Config
 from cleancut.editor_ranges import Range
 from cleancut.edl import EditDecision, EditDecisionList
-from cleancut.separation_worker import read_window, residual, run, speech_detected, write_clip
+from cleancut.separation_worker import (
+    read_window,
+    run,
+    separate_background,
+    speech_detected,
+    write_clip,
+)
 
 
 def decision(start=2, end=2.4, **changes):
@@ -79,6 +85,8 @@ def test_windows_merge_nearby_words_but_remain_bounded():
 @pytest.mark.parametrize("words, expected", [
     ([{"word": "damn", "start": 2, "end": 2.3, "probability": .8}], True),
     ([{"word": "hello", "start": 2, "end": 2.3, "probability": .8}], True),
+    ([{"word": "dam", "start": 2, "end": 2.3, "probability": .03}], True),
+    ([{"word": "n", "start": 2.5, "end": 2.55, "probability": .1}], True),
     ([{"word": "hello", "start": 0, "end": 1, "probability": .8}], False),
     ([{"word": "hello", "start": 3, "end": 4, "probability": .8}], False),
     ([], False),
@@ -97,23 +105,50 @@ def test_unverifiable_transcript_is_not_assumed_safe():
 
 
 @pytest.mark.parametrize("channels", [1, 2, 6, 8])
-def test_residual_keeps_channel_order_scale_and_exact_sample_count(channels):
+def test_background_uses_only_non_vocal_stems_with_original_channel_order(channels):
     torch = pytest.importorskip("torch")
-    t = np.arange(1000, dtype=np.float32) / SAMPLE_RATE
+    t = np.arange(SAMPLE_RATE, dtype=np.float32) / SAMPLE_RATE
     mix = np.column_stack([.1 * np.sin(2*np.pi*(200+i*30)*t) for i in range(channels)])
     calls = []
 
     def fake(model, audio, **kwargs):
         calls.append(kwargs)
-        outputs = torch.zeros((1, 4, 2, 1000))
-        outputs[0, 3] = audio[0] * .5
+        outputs = torch.zeros((1, 4, 2, len(t)))
+        outputs[0, 0] = audio[0] * .1
+        outputs[0, 1] = audio[0] * .2
+        outputs[0, 2] = audio[0] * .3
+        # Underestimated vocals must NOT cause the unassigned 30% of the
+        # original mix to be reintroduced into the restored background.
+        outputs[0, 3] = audio[0] * .1
         return outputs
 
-    result = residual(SimpleNamespace(sources=["drums", "bass", "other", "vocals"]), mix, apply=fake)
+    result = separate_background(SimpleNamespace(sources=["drums", "bass", "other", "vocals"]), mix, apply=fake)
     assert result.shape == mix.shape
     assert len(calls) == (1 if channels == 2 else channels)
-    assert np.max(np.abs(result - (mix-mix.mean(0)) * .5)) < .003
+    assert np.max(np.abs(result - mix * .6)) < .0001
     assert all(c["device"] == "cpu" and c["split"] for c in calls)
+
+
+def test_missing_vocal_tail_is_not_added_back_when_verifier_hears_nothing():
+    torch = pytest.importorskip("torch")
+    t = np.arange(SAMPLE_RATE, dtype=np.float32) / SAMPLE_RATE
+    music = .1 * np.sin(2*np.pi*200*t)
+    voice = .1 * np.sin(2*np.pi*440*t)
+    mix = np.repeat((music + voice)[:, None], 2, axis=1)
+    mean, std = torch.from_numpy(mix).mean(), torch.from_numpy(mix[:, 0]).std()
+
+    def fake(model, audio, **kwargs):
+        outputs = torch.zeros((1, 4, 2, len(t)))
+        outputs[0, 0] = torch.from_numpy(music)[None] / std
+        # This incomplete vocal estimate caused original-minus-vocals to
+        # restore half the voice. An empty ASR transcript cannot prevent that.
+        outputs[0, 3] = torch.from_numpy(voice)[None] * .5 / std
+        return outputs - mean / std
+
+    background = separate_background(
+        SimpleNamespace(sources=["other", "drums", "bass", "vocals"]), mix, apply=fake)
+    assert not speech_detected({"segments": []}, .2, .8)
+    np.testing.assert_allclose(background, music[:, None].repeat(2, axis=1), atol=1e-6)
 
 
 def test_clip_write_guards_and_wave_validation(tmp_path):
@@ -135,7 +170,8 @@ def test_clip_write_guards_and_wave_validation(tmp_path):
         read_window(source)
 
 
-def test_worker_checks_channels_independently_and_rejects_only_affected_target(tmp_path):
+@pytest.mark.parametrize("confidence", [.9, .03])
+def test_worker_checks_channels_independently_and_rejects_only_affected_target(tmp_path, confidence):
     pytest.importorskip("torch")
     source, rejected, accepted = tmp_path / "source.wav", tmp_path / "rejected.wav", tmp_path / "accepted.wav"
     source.write_bytes(pcm(4, 2))
@@ -145,7 +181,7 @@ def test_worker_checks_channels_independently_and_rejects_only_affected_target(t
         calls.append(kwargs)
         # Speech leaked through only channel 2: a stereo downmix could miss it.
         return {"segments": []} if len(calls) == 1 else {
-            "segments": [{"words": [{"word": "damn", "start": 2, "end": 2.3, "probability": .9}]}]}
+            "segments": [{"words": [{"word": "damn", "start": 2, "end": 2.3, "probability": confidence}]}]}
 
     manifest = {"language": "eng", "tasks": [{"source": str(source), "targets": [
         {"start": 1.96, "end": 2.44, "output": str(rejected)},
@@ -156,7 +192,7 @@ def test_worker_checks_channels_independently_and_rejects_only_affected_target(t
     modules = {"torchaudio.functional": SimpleNamespace(resample=lambda t, old, new: t),
                "whisper.tokenizer": SimpleNamespace(LANGUAGES={"en": "english"})}
     with patch.dict(sys.modules, modules), \
-         patch("cleancut.separation_worker.residual", side_effect=lambda model, mix: mix):
+         patch("cleancut.separation_worker.separate_background", side_effect=lambda model, mix: mix):
         run(manifest, object(), SimpleNamespace(transcribe=transcribe))
     assert len(calls) == 2 and all(c["word_timestamps"] for c in calls)
     assert not rejected.exists()
@@ -199,6 +235,34 @@ def test_verified_background_cache_reuses_source_coordinates_and_shifts_once(tmp
     assert clips[0].path == shifted[0].path
     assert abs(shifted[0].start-.96) < .0001
     assert abs(shifted[0].end-1.44) < .0001
+
+
+def test_old_residual_background_cache_is_not_reused(tmp_path):
+    video = tmp_path / "video"
+    video.write_bytes(b"fingerprint")
+
+    def worker(command, **kwargs):
+        manifest = json.loads(Path(command[-1]).read_text())
+        for task in manifest["tasks"]:
+            for target in task["targets"]:
+                Path(target["output"]).write_bytes(pcm(target["end"]-target["start"]))
+
+    def prepare():
+        return prepare_background(video, EditDecisionList(decisions=[decision()]),
+            Config(preserve_background=True), tmp_path / "work", audio_index=1,
+            channels=2, cuts=[], cache_dir=tmp_path / "cache")
+
+    with patch("cleancut.background.check_runtime"), \
+         patch("cleancut.background.probe_duration", return_value=5), \
+         patch("cleancut.background._run_ffmpeg"), \
+         patch("cleancut.background.subprocess.run", side_effect=worker) as worker_run:
+        with patch("cleancut.background.ALGORITHM", "htdemucs-residual-tiny-speech-guard-v1"):
+            old = prepare()
+        current = prepare()
+        cached = prepare()
+    assert old[0].path != current[0].path
+    assert current[0].path == cached[0].path
+    assert worker_run.call_count == 2
 
 
 def test_runtime_error_or_no_verified_output_cannot_restore_original_audio(tmp_path):

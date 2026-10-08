@@ -59,8 +59,10 @@ fire. NudeNet automatic cuts require three same-class frames at confidence
 0.75+ or one at 0.90+; repeated weaker results remain unselected for review.
 Nudity can be silent and does not require dialogue. Broad scene cuts can snap
 to shot boundaries; NudeNet and word cuts retain their precise ranges.
-Word censorship adds a configurable ending buffer (200 ms by default), stopping
-at the next detected word. See [beta.11 changes](MACOS.md#word-endings-and-false-nudity-cuts-beta11).
+Word censorship adds a configurable ending buffer (200 ms by default), even
+when the next word's estimated onset overlaps. This may trim closely following
+speech. See [beta.12 audio fixes](MACOS.md#remaining-word-fragments-beta12) and
+[beta.11 nudity changes](MACOS.md#word-endings-and-false-nudity-cuts-beta11).
 
 ## Presets
 

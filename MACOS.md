@@ -226,13 +226,49 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Remaining word fragments (beta.12)
+
+Two audio paths could still leave part of a censored word audible in beta.11:
+
+- The ending buffer stopped at Whisper's estimated next-word onset. When that
+  onset touched or overlapped the flagged word, the extra protection disappeared.
+  New scans now honor the full configured ending buffer (default **200 ms**, range
+  0–500 ms), even across that uncertain boundary. This can trim the beginning of
+  closely following speech; adjust the buffer and listen in review as needed.
+- Background preservation used **original mix minus estimated vocals**, which
+  could restore dialogue the separator missed. It now sums only Demucs's estimated
+  non-vocal stems. Even low-confidence recognized speech/word fragments within
+  150 ms of a mute reject that background, keeping the full mute instead. Some
+  music/effects may be lost. Old background caches are not reused.
+
+No new models or installation steps are required. Stop CleanCut, then update:
+
+```sh
+cd "$HOME/cleancut"
+git pull origin codex/macos-native-v2
+./macos/run.sh
+```
+
+**Scan the original video again, then render** to get the uncapped ending buffer.
+Re-rendering an existing job gets the improved separation but retains its saved
+mute endpoints. Start with background preservation **off** to check the full
+mute; if it is clean, enable preservation and compare the background-preserving
+preview. If voice leaks back, leave preservation off. This setting is in
+**Settings → Preserve background during word mutes**; save it before rendering.
+
+Separation and Whisper verification are still estimates: no recognized words
+does not prove there are no audible phonemes. Tests cover overlapping word
+timestamps, real FFmpeg rendering after scene cuts, incomplete vocal estimates,
+low-confidence speech rejection, and cache invalidation. They do not establish
+dialogue-removal quality for a particular movie or episode.
+
 ## Word endings and false nudity cuts (beta.11)
 
-New scans add up to **200 ms after each word** so underestimated Whisper word
-endings are not audible. In the scan form's **Advanced** options, **Word ending
+New scans add **200 ms after each word** by default to cover underestimated Whisper
+word endings. In the scan form's **Advanced** options, **Word ending
 buffer** can be set from 0 to 500 ms. This choice is remembered for future jobs.
-The guard stops at the next detected word onset; overlapping or inaccurate
-Whisper timestamps can still require manual trimming in review. It applies to
+In beta.11 the guard stopped at the next detected word onset; beta.12 removes
+that cap because it could cancel the buffer entirely. It applies to
 Mute, Replace (including its mute fallback), and word Cut decisions. The
 unpadded word timing remains the synthesis target, and optional background
 separation covers the enlarged mute interval.
@@ -283,8 +319,8 @@ optional background-preservation setting remain in Settings.
 
 This optional mode estimates voice and background separately around reviewed
 word mutes. The full original mix is still muted during each target; only the
-verified estimated background is mixed back, plus replacement speech if that
-mode is enabled. Audio outside the mute stays on the original soundtrack.
+estimated background that passes the speech check is mixed back, plus replacement
+speech if that mode is enabled. Audio outside the mute stays on the original soundtrack.
 Scene cuts still remove both video and audio; this is not a way to carry music
 across a deleted scene.
 
@@ -335,8 +371,9 @@ This is **experimental source separation, not a guaranteed dialogue stem**.
 Demucs was trained for music vocals; cinematic effects, singing, overlapping
 speakers, and reverb can be incorrectly removed or bleed through. Every channel
 of the estimated background is checked with local Whisper word timestamps;
-recognized speech near the target rejects that background and retains the
-full-word mute. Missing installation, invalid audio, a busy worker, or an
+any recognized speech near the target, including low-confidence fragments,
+rejects that background and retains the full-word mute. Missing installation,
+invalid audio, a busy worker, or an
 inference/mixing failure also retains the mute. Whisper can miss faint speech
 or hallucinate words in music, so this check can both miss leakage and reject
 otherwise useful backgrounds. **Listen to the preview and final output**;

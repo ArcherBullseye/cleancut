@@ -115,8 +115,8 @@ class Config:
     snap_cuts_to_scenes: bool = True
     # Pad mute/cut ranges by this many seconds on each side so cuts feel natural.
     pad_seconds: float = 0.15
-    # Word endings are often underestimated by Whisper. Stop at the next
-    # known word onset so the guard does not consume the following dialogue.
+    # Word endings and following onsets are approximate. Always honor the
+    # guard; this can trim the next word when speech is tightly spaced.
     word_end_padding_ms: int = 200
     # Merge adjacent ranges closer than this.
     merge_gap_seconds: float = 0.5

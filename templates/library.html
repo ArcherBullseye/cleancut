@@ -55,8 +55,10 @@
     <label class="inline">Word ending buffer (milliseconds)
       <input type="number" id="word-end-padding-ms" value="200" min="0" max="500" step="10">
     </label>
-    <p class="muted small">Extends censorship after the flagged word, up to the next
-      word's detected start. Increase this if an ending remains audible. Applies to new scans.</p>
+    <p class="muted small">Extends censorship after the flagged word, even if the next
+      word's estimated start overlaps. May trim closely following speech. Increase this if
+      an ending remains audible. Applies to new scans. Background preservation can still
+      leak speech; disable it in Settings if that happens.</p>
     <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
     <label class="check"><input type="checkbox" id="use-local-ai" checked> Use local Ollama AI for dialogue context and scene vision</label>
     <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow non-nudity VLM-only cuts without corroboration</label>
