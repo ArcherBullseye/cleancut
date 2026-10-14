@@ -1,7 +1,12 @@
 /* Library browser + scan form. */
 
 let currentSettings = null;
-let picked = null;
+const picked = new Map();
+let currentListing = null;
+let browseRequest = 0;
+let folderBusy = false;
+let folderRequest = 0;
+const MAX_BATCH_FILES = 500;
 
 async function loadSettings() {
   const data = await api("/api/settings");
@@ -18,6 +23,9 @@ async function loadSettings() {
 }
 
 function renderListing(data) {
+  currentListing = data;
+  document.getElementById("add-folder").disabled = folderBusy || !data.path || !!data.error || !!data.search;
+  document.getElementById("select-visible").disabled = !data.files.length;
   const listing = document.getElementById("listing");
   const crumbs = document.getElementById("crumbs");
   crumbs.textContent = data.path || "";
@@ -41,10 +49,19 @@ function renderListing(data) {
     ]));
   }
   for (const file of data.files) {
-    listing.appendChild(el("button", {
-      class: "item", onclick: () => pick(file),
+    const checkbox = el("input", {
+      type: "checkbox", "aria-label": `Select ${file.name}`,
+    });
+    checkbox.checked = picked.has(file.path);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) addFiles([file]);
+      else { picked.delete(file.path); updateSelection(); }
+      checkbox.checked = picked.has(file.path);
+    });
+    listing.appendChild(el("label", {
+      class: "item",
     }, [
-      el("span", { class: "glyph", text: "■" }),
+      checkbox,
       el("span", { class: "name", text: file.name }),
       el("span", { class: "size", text: formatBytes(file.size) }),
     ]));
@@ -55,10 +72,15 @@ function renderListing(data) {
 }
 
 async function browse(path) {
+  const request = ++browseRequest;
+  currentListing = null;
+  document.getElementById("add-folder").disabled = true;
+  document.getElementById("select-visible").disabled = true;
   const listing = document.getElementById("listing");
   listing.innerHTML = '<p class="muted">Loading...</p>';
   try {
     const data = await api(`/api/browse?path=${encodeURIComponent(path || "")}`);
+    if (request !== browseRequest) return;
     renderListing(data);
     if (path) {
       sessionStorage.setItem("cleancut.path", path);
@@ -66,25 +88,73 @@ async function browse(path) {
       sessionStorage.removeItem("cleancut.path");
     }
   } catch (e) {
+    if (request !== browseRequest) return;
     listing.innerHTML = "";
     listing.appendChild(el("p", { class: "muted", text: e.message }));
   }
 }
 
-function pick(file) {
-  picked = file;
-  document.getElementById("scan-title").textContent = file.name;
-  document.getElementById("scan-panel").hidden = false;
-  document.getElementById("scan-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+function addFiles(files) {
+  const combined = new Map(picked);
+  for (const file of files) combined.set(file.path, file);
+  if (combined.size > MAX_BATCH_FILES) {
+    toast(`Select at most ${MAX_BATCH_FILES} videos at once. Nothing was added.`, true);
+    return;
+  }
+  for (const file of files) picked.set(file.path, file);
+  updateSelection();
+}
+
+function updateSelection() {
+  document.getElementById("scan-title").textContent = `${picked.size} video${picked.size === 1 ? "" : "s"}`;
+  document.getElementById("scan-panel").hidden = !picked.size;
+  document.getElementById("selection-count").textContent = `${picked.size} selected`;
+  document.getElementById("start-scan").textContent = `Queue ${picked.size} scan${picked.size === 1 ? "" : "s"}`;
+  const list = document.getElementById("selected-files");
+  list.replaceChildren();
+  for (const file of picked.values()) {
+    list.appendChild(el("div", { class: "item" }, [
+      el("span", { class: "name", text: file.path, title: file.path }),
+      el("button", { class: "ghost", text: "Remove", "aria-label": `Remove ${file.name}`,
+        onclick: () => { picked.delete(file.path); updateSelection(); } }),
+    ]));
+  }
+  if (currentListing) renderListing(currentListing);
+}
+
+async function addFolder() {
+  if (folderBusy || !currentListing?.path || currentListing.search) return;
+  const request = ++folderRequest;
+  folderBusy = true;
+  document.getElementById("start-scan").disabled = true;
+  const button = document.getElementById("add-folder");
+  button.disabled = true;
+  button.textContent = "Reading folder…";
+  try {
+    const data = await post("/api/folder-videos", {
+      path: currentListing.path,
+      recursive: document.getElementById("include-subfolders").checked,
+    });
+    if (request !== folderRequest) return;
+    if (!data.files.length) toast("No original videos found in this folder.");
+    else addFiles(data.files);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    folderBusy = false;
+    document.getElementById("start-scan").disabled = false;
+    button.textContent = "Add this folder";
+    button.disabled = !currentListing?.path || !!currentListing.error || !!currentListing.search;
+  }
 }
 
 async function startScan() {
-  if (!picked) return;
+  if (!picked.size || folderBusy) return;
   const button = document.getElementById("start-scan");
   button.disabled = true;
   try {
     const body = {
-      path: picked.path,
+      paths: [...picked.keys()],
       preset: document.querySelector("input[name=preset]:checked").value,
       categories: readCategoryChips(document.getElementById("categories")),
       actions: readActionGrid(document.getElementById("actions")),
@@ -96,7 +166,7 @@ async function startScan() {
       word_end_padding_ms: Number(document.getElementById("word-end-padding-ms").value),
     };
     const res = await post("/api/scan", body);
-    window.location.href = `/job/${res.job_id}`;
+    window.location.href = res.jobs.length === 1 ? `/job/${res.job_id}` : "/jobs";
   } catch (e) {
     toast(e.message, true);
     button.disabled = false;
@@ -106,26 +176,37 @@ async function startScan() {
 let searchTimer = null;
 function onSearch(event) {
   clearTimeout(searchTimer);
+  const request = ++browseRequest;
+  currentListing = null;
+  document.getElementById("add-folder").disabled = true;
+  document.getElementById("select-visible").disabled = true;
   const term = event.target.value;
   searchTimer = setTimeout(async () => {
     if (term.trim().length < 2) {
       browse(sessionStorage.getItem("cleancut.path") || "");
       return;
     }
-    const data = await api(`/api/search?q=${encodeURIComponent(term)}`);
-    renderListing({ path: `search: ${term}`, parent: null, dirs: [], files: data.results });
+    try {
+      const data = await api(`/api/search?q=${encodeURIComponent(term)}`);
+      if (request !== browseRequest) return;
+      renderListing({ path: `search: ${term}`, search: true, parent: null, dirs: [], files: data.results });
+    } catch (e) { if (request === browseRequest) toast(e.message, true); }
   }, 320);
 }
 
 document.getElementById("search").addEventListener("input", onSearch);
 document.getElementById("locations").addEventListener("click", () => {
+  clearTimeout(searchTimer);
   document.getElementById("search").value = "";
   browse("");
 });
 document.getElementById("start-scan").addEventListener("click", startScan);
 document.getElementById("cancel-pick").addEventListener("click", () => {
-  picked = null;
-  document.getElementById("scan-panel").hidden = true;
+  folderRequest++;
+  picked.clear();
+  updateSelection();
 });
+document.getElementById("select-visible").addEventListener("click", () => addFiles(currentListing?.files || []));
+document.getElementById("add-folder").addEventListener("click", addFolder);
 
 loadSettings().then(() => browse(sessionStorage.getItem("cleancut.path") || ""));

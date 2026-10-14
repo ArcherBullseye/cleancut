@@ -15,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.12")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.13")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -98,6 +98,23 @@ def api_search():
     return jsonify({"results": library.search(request.args.get("q", ""))})
 
 
+@app.route("/api/folder-videos", methods=["POST"])
+def api_folder_videos():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("path"), str):
+        return _bad("Choose a folder.")
+    if type(body.get("recursive", True)) is not bool:
+        return _bad("Include subfolders must be true or false.")
+    path = library.resolve_safe(body["path"])
+    if path is None or not path.is_dir():
+        return _bad("That folder is outside the mounted media roots.", 403)
+    try:
+        files = library.folder_videos(path, body.get("recursive", True))
+    except (OSError, ValueError) as exc:
+        return _bad(str(exc))
+    return jsonify({"files": files})
+
+
 # --------------------------------------------------------------------------
 # jobs
 # --------------------------------------------------------------------------
@@ -109,17 +126,27 @@ def api_jobs():
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    body = request.get_json(silent=True) or {}
-    video = library.resolve_safe(body.get("path", ""))
-    if video is None or not video.is_file():
-        return _bad("That file is outside the mounted media roots.", 403)
-    if not os.access(video, os.R_OK):
-        return _bad("That video is not readable. Check the NAS share permissions.", 403)
-    if not library.is_video(video):
-        return _bad("Not a recognised video file.")
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _bad("Choose one or more videos.")
+    raw_paths = body.get("paths", [body.get("path", "")])
+    if (not isinstance(raw_paths, list) or not 1 <= len(raw_paths) <= library.MAX_BATCH_FILES
+            or any(not isinstance(path, str) or not path for path in raw_paths)):
+        return _bad(f"Choose between 1 and {library.MAX_BATCH_FILES} videos.")
+    videos = []
+    for raw_path in raw_paths:
+        video = library.resolve_safe(raw_path)
+        if video is None or not video.is_file():
+            return _bad("That file is outside the mounted media roots or no longer available.", 403)
+        if not os.access(video, os.R_OK):
+            return _bad("That video is not readable. Check the NAS share permissions.", 403)
+        if not library.is_video(video):
+            return _bad("Not a recognised video file.")
+        if video not in videos:
+            videos.append(video)
 
-    existing = jobs.active_job_for(str(video))
-    if existing:
+    existing = jobs.active_job_for(str(videos[0])) if len(videos) == 1 else None
+    if existing and "paths" not in body:
         return jsonify({"ok": True, "job_id": existing["id"], "existing": True})
 
     cfg = settings_store.load()
@@ -165,9 +192,7 @@ def api_scan():
         if key in body:
             options[key] = bool(body[key])
 
-    job_id = jobs.create_job(
-        "scan", str(video), title=video.stem, preset=preset, options=options,
-    )
+    queued = jobs.create_scan_jobs(videos, preset=preset, options=options)
     # Remember this form for future jobs; the queued job owns its independent
     # snapshot. No global render-time switch can turn its Mute into Replace.
     settings_store.save({
@@ -177,7 +202,8 @@ def api_scan():
         "allow_solo_visual": options["allow_solo_visual"],
         "word_end_padding_ms": word_padding,
     })
-    return jsonify({"ok": True, "job_id": job_id})
+    return jsonify({"ok": True, "job_id": queued[0]["job_id"], "jobs": queued,
+                    "queued_count": sum(not item["existing"] for item in queued)})
 
 
 @app.route("/api/job/<int:job_id>")

@@ -173,6 +173,7 @@ label.inline input, label.inline select { width: auto; }
 
 .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 10px; word-break: break-all; }
 .listing { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.selected-files { max-height: 240px; overflow-y: auto; margin-bottom: 12px; }
 .item {
   display: flex;
   align-items: center;

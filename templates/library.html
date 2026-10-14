@@ -3,18 +3,29 @@
 {% block content %}
 <section class="panel">
   <div class="panel-head">
-    <h1>Choose a video</h1>
+    <h1>Choose videos</h1>
     <div class="row">
       <button id="locations" type="button">Locations</button>
       <input id="search" type="search" placeholder="Search the library..." autocomplete="off">
     </div>
   </div>
   <div id="crumbs" class="crumbs"></div>
+  <div class="row">
+    <button id="select-visible" type="button" disabled>Select all visible videos</button>
+    <button id="add-folder" type="button" disabled>Add this folder</button>
+    <label class="check"><input id="include-subfolders" type="checkbox" checked> Include subfolders</label>
+    <span id="selection-count" role="status">0 selected</span>
+  </div>
+  <p class="muted small">Select files across folders, or open a folder and add it.
+    Folder selection skips hidden/NAS housekeeping folders and .clean outputs. Up to 500 videos per batch.</p>
   <div id="listing" class="listing"><p class="muted">Loading...</p></div>
 </section>
 
 <section class="panel" id="scan-panel" hidden>
   <h2>Scan <span id="scan-title" class="mono"></span></h2>
+  <div id="selected-files" class="listing selected-files"></div>
+  <p class="muted small">Each video becomes a separate queued job with the settings below.
+    Already queued or running videos are not added twice.</p>
 
   <div class="field">
     <label>Preset</label>
@@ -69,8 +80,8 @@
   </details>
 
   <div class="row">
-    <button id="start-scan" class="primary">Start scan</button>
-    <button id="cancel-pick" class="ghost">Cancel</button>
+    <button id="start-scan" class="primary">Queue scans</button>
+    <button id="cancel-pick" class="ghost">Clear selection</button>
   </div>
   <p class="muted small">Scans run one at a time on the server. You can close this page -- progress is kept.
     Low-confidence nudity suggestions are unselected for review and are not included in automatic renders.</p>

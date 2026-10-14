@@ -350,7 +350,9 @@ def test_queue_render_can_return_cleaned_video_beside_nas_source(tmp_path):
     }
     with patch("webapp.jobs.get_job", return_value=scan), \
          patch("webapp.jobs.settings_store.load", return_value={}), \
+         patch("webapp.jobs._connect") as connect, \
          patch("webapp.jobs.create_job", return_value=13) as create:
+        connect.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = None
         assert jobs.queue_render(12) == 13
 
     assert create.call_args.kwargs["output_path"] == str(nas / "Movie.clean.mp4")

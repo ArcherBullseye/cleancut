@@ -226,6 +226,28 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Multiple files and folders (beta.13)
+
+In Library, check multiple videos (selections stay while browsing folders),
+use **Select all visible videos**, or open a folder and choose **Add this folder**.
+**Include subfolders** is enabled by default. Review/remove selected files,
+choose shared scan settings, and click **Queue N scans**. Each video becomes
+a separate durable job, processed one at a time. Enable **Render automatically**
+to also queue cleaned outputs; otherwise review each completed scan first.
+
+Up to 500 videos can be selected per submission. Folder expansion skips hidden
+and NAS housekeeping folders, directory symlinks, and `.clean` outputs. It
+rejects oversized/unreadable folders rather than silently submitting a partial
+list. Active jobs and repeated selections are deduplicated. All selected files
+are validated before any jobs are added; queued jobs survive closing the page
+or restarting the app. Unsubmitted selections are not saved on page refresh.
+All active jobs remain visible on Jobs, including batches larger than 100.
+Conflicting output names already reserved by another source get a path-derived
+suffix, so same-named videos from separate folders have separate destinations.
+
+Update and restart with the usual `git pull origin codex/macos-native-v2` and
+`./macos/run.sh`. No new models or installation steps are required.
+
 ## Remaining word fragments (beta.12)
 
 Two audio paths could still leave part of a censored word audible in beta.11:

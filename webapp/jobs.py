@@ -9,6 +9,7 @@ rather than an un-interruptible thread.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -152,6 +153,31 @@ def create_job(
     return job_id
 
 
+def create_scan_jobs(videos: list[Path], *, preset: str, options: dict[str, Any]) -> list[dict]:
+    """Enqueue an ordered batch atomically; reuse active jobs, including retries."""
+    result = []
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for video in videos:
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE video_path=? AND status IN (?, ?) ORDER BY id DESC LIMIT 1",
+                (str(video), QUEUED, RUNNING),
+            ).fetchone()
+            if existing:
+                result.append({"job_id": existing["id"], "existing": True, "path": str(video)})
+                continue
+            cur = conn.execute(
+                "INSERT INTO jobs (kind, status, video_path, title, preset, options, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("scan", QUEUED, str(video), video.stem, preset, json.dumps(options), time.time()),
+            )
+            job_id = int(cur.lastrowid)
+            job_dir(job_id).mkdir(parents=True, exist_ok=True)
+            result.append({"job_id": job_id, "existing": False, "path": str(video)})
+    _wake.set()
+    return result
+
+
 def update_job(job_id: int, **fields: Any) -> None:
     if not fields:
         return
@@ -167,9 +193,12 @@ def get_job(job_id: int) -> dict[str, Any] | None:
 
 
 def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
+    """Keep every active job visible, plus bounded recent history."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM jobs WHERE status IN (?, ?) OR id IN "
+            "(SELECT id FROM jobs ORDER BY id DESC LIMIT ?) ORDER BY id DESC",
+            (QUEUED, RUNNING, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -597,6 +626,16 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
     if not out_dir.is_dir() or not os.access(out_dir, os.W_OK):
         return None
     output = out_dir / f"{video.stem}.clean.mp4"
+    # Batch selections can contain identically named episodes in different
+    # folders. Never publish them over another source's reserved output.
+    with _connect() as conn:
+        collision = conn.execute(
+            "SELECT id FROM jobs WHERE output_path=? AND video_path!=? LIMIT 1",
+            (str(output), str(video)),
+        ).fetchone()
+    if collision:
+        suffix = hashlib.sha256(str(video.resolve()).encode()).hexdigest()[:12]
+        output = out_dir / f"{video.stem}.{suffix}.clean.mp4"
 
     render_opts = {
         "encoder": cfg.get("encoder", "auto"),

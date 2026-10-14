@@ -17,6 +17,38 @@ from webapp.paths import OUTPUT_DIR, media_roots
 VIDEO_SUFFIXES = {
     ".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".ts", ".wmv", ".flv",
 }
+MAX_BATCH_FILES = 500
+
+
+def folder_videos(path: Path, recursive: bool = True) -> list[dict[str, Any]]:
+    """Expand a folder without following directory links or NAS housekeeping trees.
+
+    Fail rather than silently submit a truncated or partly unreadable folder.
+    Every discovered file is independently checked against the media roots.
+    """
+    found: dict[str, dict[str, Any]] = {}
+
+    def failed(error):
+        raise ValueError("Cannot read the whole folder. Check NAS permissions and try again.") from error
+
+    for count, (directory, dirs, names) in enumerate(os.walk(path, onerror=failed), 1):
+        if count > 10_000:
+            raise ValueError("Folder is too large to browse. Choose a smaller subfolder.")
+        dirs[:] = sorted(d for d in dirs if not d.startswith((".", "@"))
+                         and not (Path(directory) / d).is_symlink()) if recursive else []
+        for name in sorted(names, key=str.casefold):
+            candidate = Path(directory) / name
+            if name.startswith((".", "@")) or not is_video(candidate) or candidate.stem.lower().endswith(".clean"):
+                continue
+            video = resolve_safe(str(candidate))
+            if video is None or not video.is_file():
+                continue
+            if not os.access(video, os.R_OK):
+                raise ValueError(f"Video is not readable: {name}. Check NAS permissions.")
+            found[str(video)] = _entry(video, "file")
+            if len(found) > MAX_BATCH_FILES:
+                raise ValueError(f"Select at most {MAX_BATCH_FILES} videos at once. Choose a smaller folder.")
+    return list(found.values())
 
 
 def allowed_roots() -> list[Path]:
