@@ -6,7 +6,17 @@
     <h1>Jobs</h1>
     <a class="button ghost" href="/">New scan</a>
   </div>
+  <div class="row">
+    <label>Status <select id="job-state">
+      <option value="">All</option><option value="queued">Queued</option>
+      <option value="running">Running</option><option value="done">Done</option>
+      <option value="failed">Failed</option><option value="canceled">Canceled</option>
+    </select></label>
+    <button id="delete-filtered" class="danger" disabled>Delete finished jobs in this view</button>
+  </div>
+  <p class="muted small">Bulk deletion removes job records, logs, review edits and previews—not source or cleaned videos.
+    Queued/running jobs are protected; cancel them first.</p>
   <div id="jobs" class="jobs"><p class="muted">Loading...</p></div>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='jobs.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='jobs.js', v=version) }}"></script>{% endblock %}

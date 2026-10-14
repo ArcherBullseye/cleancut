@@ -90,6 +90,14 @@ test('oversized addition leaves existing selection intact', () => {
   assert.match(s.notices[0], /Nothing was added/);
 });
 
+test('grouped submission opens the single parent job', async () => {
+  const s = setup();
+  s.context.post = async () => ({batch_id: 42, jobs: [{job_id: 1}, {job_id: 2}]});
+  s.run(`addFiles([{path:'/a.mp4',name:'a'},{path:'/b.mp4',name:'b'}])`);
+  await s.run('startScan()');
+  assert.equal(s.context.window.location.href, '/job/42');
+});
+
 test('clearing during folder expansion does not unexpectedly restore selection', async () => {
   const s = setup();
   let complete;

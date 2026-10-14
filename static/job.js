@@ -37,6 +37,18 @@ function renderStatus() {
 function renderActions() {
   const row = document.getElementById("job-actions");
   row.innerHTML = "";
+  const files = document.getElementById("batch-files");
+  files.hidden = job.kind !== "batch";
+  if (job.kind === "batch") {
+    files.replaceChildren();
+    for (const child of job.children || []) {
+      files.appendChild(el("div", {class: "job-card"}, [
+        el("a", {href: `/job/${child.id}`, text: `${child.title} — ${child.kind}`}),
+        el("span", {class: `pill ${child.status}`, text: child.status}),
+      ]));
+    }
+  }
+  if (job.batch_id) row.appendChild(el("a", {class:"button ghost", href:`/job/${job.batch_id}`, text:"Back to batch"}));
 
   if (job.kind === "scan" && job.status === "done" && job.edl_path) {
     row.appendChild(el("button", {
@@ -357,7 +369,7 @@ async function poll() {
   } catch (e) {
     toast(e.message, true);
   }
-  if (job && ACTIVE.has(job.status)) setTimeout(poll, 3000);
+  if (job && (ACTIVE.has(job.status) || job.kind === "batch")) setTimeout(poll, 3000);
 }
 
 document.getElementById("cancel-job").addEventListener("click", async () => {

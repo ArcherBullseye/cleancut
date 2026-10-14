@@ -226,13 +226,32 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Batch jobs and bulk cleanup (beta.14)
+
+New multi-file selections now appear as **one batch job** on Jobs. Open it to
+see individual scan/render progress and review each file. Files still execute
+one at a time. With auto-render disabled, a finished batch means its scans are
+finished, not that cleaned outputs have been rendered. Existing beta.13 jobs
+remain standalone; they are not retroactively grouped. Already-active files
+remain in their current job rather than being moved into a new batch.
+
+Jobs now has All / Queued / Running / Done / Failed / Canceled filters and
+**Delete finished jobs in this view**. Confirming deletes the displayed terminal
+jobs and their child jobs, including logs, EDLs and previews. It is irreversible,
+but **source videos and published cleaned videos are kept**. The server skips
+active jobs and parents with active descendants. Cancel queued/running work
+before bulk deletion. Deleting one batch individually also cancels its children.
+
+Radarr/Sonarr/SABnzbd integration is planned separately, not enabled by this
+release. See [the integration design](INTEGRATIONS.md).
+
 ## Multiple files and folders (beta.13)
 
 In Library, check multiple videos (selections stay while browsing folders),
 use **Select all visible videos**, or open a folder and choose **Add this folder**.
 **Include subfolders** is enabled by default. Review/remove selected files,
 choose shared scan settings, and click **Queue N scans**. Each video becomes
-a separate durable job, processed one at a time. Enable **Render automatically**
+a durable file task within one batch (beta.14+), processed one at a time. Enable **Render automatically**
 to also queue cleaned outputs; otherwise review each completed scan first.
 
 Up to 500 videos can be selected per submission. Folder expansion skips hidden

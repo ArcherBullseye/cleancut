@@ -47,7 +47,10 @@ def test_batch_order_settings_deduplication_and_restart(client, tmp_path):
     retry = client.post("/api/scan", json=body).json
     assert retry["queued_count"] == 0
     assert all(r["existing"] for r in retry["jobs"])
-    assert len(jobs.list_jobs()) == 2
+    assert len(jobs.list_jobs()) == 1
+    batch = jobs.get_job(response.json["batch_id"])
+    assert batch["kind"] == "batch" and batch["file_count"] == 2
+    assert retry["batch_id"] == batch["id"]
 
 
 @pytest.mark.parametrize("bad", ["missing.mp4", "notes.txt", "../outside.mp4"])
@@ -140,3 +143,78 @@ def test_same_named_videos_get_distinct_output_paths(client, tmp_path):
     assert first["output_path"] != second["output_path"]
     again = jobs.get_job(jobs.queue_render(records[1]["job_id"]))
     assert again["output_path"] == second["output_path"]
+
+
+def make_batch(client, tmp_path, **options):
+    paths = [str(video(tmp_path, f"batch/{i}.mp4")) for i in range(2)]
+    response = client.post("/api/scan", json={"paths": paths, **options})
+    assert response.status_code == 200
+    return response.json["batch_id"], [item["job_id"] for item in response.json["jobs"]]
+
+
+def test_parent_status_tracks_children_and_never_runs_as_subprocess(client, tmp_path):
+    parent, children = make_batch(client, tmp_path)
+    assert [job["id"] for job in client.get("/api/jobs").json["jobs"]] == [parent]
+    jobs.update_job(children[0], status="running")
+    assert jobs.get_job(parent)["status"] == "running"
+    assert jobs._next_queued()["id"] == children[1]
+    for child in children:
+        jobs.update_job(child, status="done")
+    assert jobs.get_job(parent)["status"] == "done"
+    assert jobs.get_job(parent)["progress"] == 100
+    assert jobs._next_queued() is None
+    jobs.init_db()
+    assert jobs.get_job(parent)["status"] == "done"
+
+
+def test_render_is_nested_and_batch_waits_for_auto_render(client, tmp_path):
+    parent, children = make_batch(client, tmp_path, auto_render=True)
+    settings.save({"output_dir": str(tmp_path / "out")})
+    for child in children:
+        jobs.update_job(child, status="done", edl_path=str(tmp_path / "edl.json"))
+    assert jobs.get_job(parent)["status"] == "queued"
+    with patch.object(jobs, "OUTPUT_DIR", tmp_path / "out"):
+        renders = [jobs.queue_render(child) for child in children]
+    assert all(jobs.get_job(render)["batch_id"] == parent for render in renders)
+    assert len(client.get("/api/jobs").json["jobs"]) == 1
+    for render in renders:
+        jobs.update_job(render, status="done")
+    assert jobs.get_job(parent)["status"] == "done"
+
+
+def test_bulk_delete_filters_protect_active_and_keep_videos(client, tmp_path):
+    parent, children = make_batch(client, tmp_path)
+    original = jobs.get_job(children[0])["video_path"]
+    from pathlib import Path
+    cleaned = tmp_path / "movie.clean.mp4"
+    cleaned.write_bytes(b"cleaned")
+    for child in children:
+        jobs.update_job(child, status="done")
+    active = jobs.create_job("scan", str(video(tmp_path, "active.mp4")))
+    assert [j["id"] for j in client.get("/api/jobs?state=done").json["jobs"]] == [parent]
+    result = client.post("/api/jobs/delete", json={"ids": [parent, active]}).json
+    assert result == {"deleted": [parent], "skipped": [active]}
+    assert jobs.get_job(parent) is None
+    assert all(jobs.get_job(child) is None for child in children)
+    assert Path(original).exists() and cleaned.read_bytes() == b"cleaned"
+    assert all(not jobs.job_dir(child).exists() for child in children)
+
+
+def test_bulk_delete_scan_with_active_render_is_skipped(client, tmp_path):
+    scan = jobs.create_job("scan", str(video(tmp_path, "movie.mp4")))
+    jobs.update_job(scan, status="done")
+    render = jobs.create_job("render", jobs.get_job(scan)["video_path"], parent_id=scan)
+    assert client.post("/api/jobs/delete", json={"ids": [scan]}).json["skipped"] == [scan]
+    assert jobs.get_job(render)
+
+
+def test_cancel_batch_cancels_every_queued_file(client, tmp_path):
+    parent, children = make_batch(client, tmp_path)
+    assert client.post(f"/api/job/{parent}/cancel").json["ok"]
+    assert all(jobs.get_job(child)["status"] == "canceled" for child in children)
+    assert jobs.get_job(parent)["status"] == "canceled"
+
+
+@pytest.mark.parametrize("body", [{}, {"ids": []}, {"ids": [True]}, {"ids": "all"}])
+def test_bulk_delete_requires_explicit_ids(client, body):
+    assert client.post("/api/jobs/delete", json=body).status_code == 400

@@ -15,7 +15,7 @@ from webapp import jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.13")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.14")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -121,7 +121,31 @@ def api_folder_videos():
 
 @app.route("/api/jobs")
 def api_jobs():
-    return jsonify({"jobs": jobs.list_jobs()})
+    state = request.args.get("state", "")
+    if state and state not in {"queued", "running", "done", "failed", "canceled"}:
+        return _bad("Unknown job state.")
+    records = jobs.list_jobs(limit=10000)
+    return jsonify({"jobs": [job for job in records if not state or job["status"] == state]})
+
+
+@app.route("/api/jobs/delete", methods=["POST"])
+def api_delete_jobs():
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or not ids or len(ids) > 10000 or any(type(i) is not int for i in ids):
+        return _bad("Choose jobs to delete.")
+    removed, skipped = [], []
+    for job_id in dict.fromkeys(ids):
+        job = jobs.get_job(job_id)
+        if not job:
+            continue
+        children = jobs.descendants(job_id)
+        if job["status"] in jobs.ACTIVE_STATUSES or any(c["status"] in jobs.ACTIVE_STATUSES for c in children):
+            skipped.append(job_id)
+            continue
+        jobs.delete_job(job_id)
+        removed.append(job_id)
+    return jsonify({"deleted": removed, "skipped": skipped})
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -192,7 +216,7 @@ def api_scan():
         if key in body:
             options[key] = bool(body[key])
 
-    queued = jobs.create_scan_jobs(videos, preset=preset, options=options)
+    queued = jobs.create_scan_jobs(videos, preset=preset, options=options, group=len(videos) > 1)
     # Remember this form for future jobs; the queued job owns its independent
     # snapshot. No global render-time switch can turn its Mute into Replace.
     settings_store.save({
@@ -203,6 +227,7 @@ def api_scan():
         "word_end_padding_ms": word_padding,
     })
     return jsonify({"ok": True, "job_id": queued[0]["job_id"], "jobs": queued,
+                    "batch_id": next((item["batch_id"] for item in queued if item.get("batch_id")), None),
                     "queued_count": sum(not item["existing"] for item in queued)})
 
 

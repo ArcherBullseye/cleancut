@@ -166,7 +166,7 @@ async function startScan() {
       word_end_padding_ms: Number(document.getElementById("word-end-padding-ms").value),
     };
     const res = await post("/api/scan", body);
-    window.location.href = res.jobs.length === 1 ? `/job/${res.job_id}` : "/jobs";
+    window.location.href = res.batch_id ? `/job/${res.batch_id}` : res.jobs.length === 1 ? `/job/${res.job_id}` : "/jobs";
   } catch (e) {
     toast(e.message, true);
     button.disabled = false;

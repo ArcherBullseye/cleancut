@@ -116,6 +116,8 @@ def init_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+        if "batch_id" not in {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}:
+            conn.execute("ALTER TABLE jobs ADD COLUMN batch_id INTEGER")
         # A job left RUNNING can only be a crash or a restart mid-run -- the
         # child process is long gone, so never leave it spinning in the UI.
         conn.execute(
@@ -153,7 +155,7 @@ def create_job(
     return job_id
 
 
-def create_scan_jobs(videos: list[Path], *, preset: str, options: dict[str, Any]) -> list[dict]:
+def create_scan_jobs(videos: list[Path], *, preset: str, options: dict[str, Any], group: bool = False) -> list[dict]:
     """Enqueue an ordered batch atomically; reuse active jobs, including retries."""
     result = []
     with _connect() as conn:
@@ -164,7 +166,9 @@ def create_scan_jobs(videos: list[Path], *, preset: str, options: dict[str, Any]
                 (str(video), QUEUED, RUNNING),
             ).fetchone()
             if existing:
-                result.append({"job_id": existing["id"], "existing": True, "path": str(video)})
+                owner = conn.execute("SELECT batch_id FROM jobs WHERE id=?", (existing["id"],)).fetchone()
+                result.append({"job_id": existing["id"], "existing": True, "path": str(video),
+                               "batch_id": owner["batch_id"]})
                 continue
             cur = conn.execute(
                 "INSERT INTO jobs (kind, status, video_path, title, preset, options, created_at) "
@@ -174,6 +178,16 @@ def create_scan_jobs(videos: list[Path], *, preset: str, options: dict[str, Any]
             job_id = int(cur.lastrowid)
             job_dir(job_id).mkdir(parents=True, exist_ok=True)
             result.append({"job_id": job_id, "existing": False, "path": str(video)})
+        added = [item for item in result if not item["existing"]]
+        if group and added:
+            cursor = conn.execute(
+                "INSERT INTO jobs (kind,status,video_path,title,preset,options,created_at) VALUES (?,?,?,?,?,?,?)",
+                ("batch", QUEUED, "", f"Batch · {len(added)} videos", preset, json.dumps(options), time.time()),
+            )
+            batch_id = int(cursor.lastrowid)
+            for item in added:
+                conn.execute("UPDATE jobs SET batch_id=? WHERE id=?", (batch_id, item["job_id"]))
+                item["batch_id"] = batch_id
     _wake.set()
     return result
 
@@ -189,7 +203,29 @@ def update_job(job_id: int, **fields: Any) -> None:
 def get_job(job_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    job = dict(row)
+    return _batch_summary(job) if job["kind"] == "batch" else job
+
+
+def _batch_summary(job: dict) -> dict:
+    with _connect() as conn:
+        children = [dict(row) for row in conn.execute(
+            "SELECT * FROM jobs WHERE batch_id=? ORDER BY id", (job["id"],))]
+    scans = [child for child in children if child["kind"] == "scan"]
+    latest = {child["parent_id"]: child for child in children if child["kind"] == "render"}
+    files = [latest.get(scan["id"], scan) for scan in scans]
+    states = {child["status"] for child in files}
+    if json.loads(job["options"] or "{}").get("auto_render") and any(
+        scan["status"] == DONE and scan["id"] not in latest for scan in scans
+    ):
+        states.add(QUEUED)
+    status = next((s for s in (RUNNING, QUEUED, FAILED, CANCELED) if s in states), DONE)
+    completed = sum(child["status"] not in ACTIVE_STATUSES for child in files)
+    job.update(status=status, children=children, file_count=len(scans),
+               stage=f"{completed}/{len(scans)} files finished", progress=100*completed/max(1, len(scans)))
+    return job
 
 
 def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
@@ -200,7 +236,8 @@ def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
             "(SELECT id FROM jobs ORDER BY id DESC LIMIT ?) ORDER BY id DESC",
             (QUEUED, RUNNING, limit),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_batch_summary(dict(r)) if r["kind"] == "batch" else dict(r)
+            for r in rows if r["batch_id"] is None]
 
 
 def active_job_for(video_path: str) -> dict[str, Any] | None:
@@ -212,16 +249,32 @@ def active_job_for(video_path: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def descendants(job_id: int) -> list[dict]:
+    with _connect() as conn:
+        return [dict(row) for row in conn.execute(
+            "WITH RECURSIVE tree(id) AS (SELECT id FROM jobs WHERE parent_id=? OR batch_id=? "
+            "UNION SELECT j.id FROM jobs j JOIN tree t ON j.parent_id=t.id OR j.batch_id=t.id) "
+            "SELECT * FROM jobs WHERE id IN (SELECT id FROM tree)", (job_id, job_id))]
+
+
 def delete_job(job_id: int) -> None:
+    for child in descendants(job_id):
+        cancel_job(child["id"])
+    children = descendants(job_id)
     cancel_job(job_id)
     with _connect() as conn:
         conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.executemany("DELETE FROM jobs WHERE id=?", [(child["id"],) for child in children])
     import shutil
     shutil.rmtree(job_dir(job_id), ignore_errors=True)
+    for child in children:
+        shutil.rmtree(job_dir(child["id"]), ignore_errors=True)
 
 
 def cancel_job(job_id: int) -> bool:
     job = get_job(job_id)
+    if job and job["kind"] == "batch":
+        return any([cancel_job(child["id"]) for child in job["children"]])
     if not job or job["status"] not in ACTIVE_STATUSES:
         return False
     update_job(job_id, status=CANCELED, finished_at=time.time(), stage="Canceled")
@@ -603,7 +656,8 @@ def _finish_ok(job_id: int, job: dict[str, Any]) -> None:
     if fields.get("status") == DONE and job["kind"] == "scan":
         opts = json.loads(job["options"] or "{}")
         if opts.get("auto_render"):
-            queue_render(job_id)
+            if queue_render(job_id) is None:
+                update_job(job_id, status=FAILED, error="Could not queue automatic render; check output permissions.")
 
 
 def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -> int | None:
@@ -651,17 +705,20 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
         "audio_track": opts.get("audio_track"),
     }
     render_opts.update(overrides or {})
-    return create_job(
+    render_id = create_job(
         "render", str(video), title=scan["title"], preset=scan["preset"],
         options=render_opts, edl_path=scan["edl_path"], output_path=str(output),
         parent_id=scan_job_id,
     )
+    if scan.get("batch_id"):
+        update_job(render_id, batch_id=scan["batch_id"])
+    return render_id
 
 
 def _next_queued() -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status=? ORDER BY id ASC LIMIT 1", (QUEUED,)
+            "SELECT * FROM jobs WHERE status=? AND kind!='batch' ORDER BY id ASC LIMIT 1", (QUEUED,)
         ).fetchone()
     return dict(row) if row else None
 
