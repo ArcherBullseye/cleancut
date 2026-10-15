@@ -226,6 +226,18 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Local library integration (beta.15)
+
+The new **Integrations** page connects tagged Radarr/Sonarr imports to the local
+queue, with optional auto-render and verified library-file replacement. SABnzbd
+keeps its existing download workflow. Integration is **disabled by default**;
+normal Library jobs still create separate cleaned copies.
+
+Configure it on the AI Mac at localhost only after existing jobs finish. It
+includes service/path tests, temporary original backups, durable deduplication,
+and explicit interrupted-publication recovery. See [setup and safety limits](INTEGRATIONS.md).
+No additional AI model is required.
+
 ## Batch jobs and bulk cleanup (beta.14)
 
 New multi-file selections now appear as **one batch job** on Jobs. Open it to
@@ -242,8 +254,8 @@ but **source videos and published cleaned videos are kept**. The server skips
 active jobs and parents with active descendants. Cancel queued/running work
 before bulk deletion. Deleting one batch individually also cancels its children.
 
-Radarr/Sonarr/SABnzbd integration is planned separately, not enabled by this
-release. See [the integration design](INTEGRATIONS.md).
+Radarr/Sonarr integration is available starting with beta.15 and must be explicitly
+enabled. See [the integration guide](INTEGRATIONS.md).
 
 ## Multiple files and folders (beta.13)
 

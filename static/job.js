@@ -10,6 +10,7 @@ let loadedEdlFor = null;
 /* ---------------------------------------------------------------- status */
 
 function renderStatus() {
+  document.getElementById("integration-warning").hidden = !job.options?.integration_id;
   const pill = document.getElementById("job-status");
   pill.textContent = job.status;
   pill.className = `pill ${job.status}`;
@@ -50,7 +51,8 @@ function renderActions() {
   }
   if (job.batch_id) row.appendChild(el("a", {class:"button ghost", href:`/job/${job.batch_id}`, text:"Back to batch"}));
 
-  if (job.kind === "scan" && job.status === "done" && job.edl_path) {
+  if (job.kind === "scan" && job.status === "done" && job.edl_path &&
+      !["complete", "preparing", "publishing", "published"].includes(job.integration_state)) {
     row.appendChild(el("button", {
       class: "primary", text: "Render cleaned video", onclick: startRender,
     }));
@@ -77,6 +79,7 @@ function renderActions() {
 }
 
 async function startRender() {
+  if (job.options?.integration_id && !confirm("Render and replace this library original after verification? Review the accepted edits first.")) return;
   try {
     const res = await post(`/api/job/${JOB_ID}/render`);
     window.location.href = `/job/${res.job_id}`;
@@ -365,7 +368,9 @@ async function poll() {
     job = await api(`/api/job/${JOB_ID}`);
     renderStatus();
     await refreshLog();
-    if (job.kind === "scan" && job.status === "done") await loadEdl(false);
+    if (["publishing", "published", "complete"].includes(job.integration_state)) {
+      document.getElementById("review-panel").hidden = true;
+    } else if (job.kind === "scan" && job.status === "done") await loadEdl(false);
   } catch (e) {
     toast(e.message, true);
   }

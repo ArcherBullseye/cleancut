@@ -13,8 +13,8 @@ import hashlib
 import json
 import os
 import re
-import signal
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -76,6 +76,7 @@ _procs_lock = threading.Lock()
 _wake = threading.Event()
 _worker_started = False
 _worker_lock = threading.Lock()
+_render_queue_lock = threading.RLock()
 
 
 # --------------------------------------------------------------------------
@@ -136,6 +137,7 @@ def create_job(
     edl_path: str = "",
     output_path: str = "",
     parent_id: int | None = None,
+    wake: bool = True,
 ) -> int:
     with _connect() as conn:
         cur = conn.execute(
@@ -151,7 +153,8 @@ def create_job(
         )
         job_id = int(cur.lastrowid)
     job_dir(job_id).mkdir(parents=True, exist_ok=True)
-    _wake.set()
+    if wake:
+        _wake.set()
     return job_id
 
 
@@ -258,6 +261,9 @@ def descendants(job_id: int) -> list[dict]:
 
 
 def delete_job(job_id: int) -> None:
+    from webapp.integrations import protected
+    if any(protected(i) for i in [job_id, *[c["id"] for c in descendants(job_id)]]):
+        raise ValueError("Recover this import in Integrations before deleting its jobs.")
     for child in descendants(job_id):
         cancel_job(child["id"])
     children = descendants(job_id)
@@ -272,6 +278,9 @@ def delete_job(job_id: int) -> None:
 
 
 def cancel_job(job_id: int) -> bool:
+    from webapp.integrations import protected
+    if protected(job_id):
+        return False  # publication has a durable recovery journal; don't delete its staging
     job = get_job(job_id)
     if job and job["kind"] == "batch":
         return any([cancel_job(child["id"]) for child in job["children"]])
@@ -513,8 +522,19 @@ def _run_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     jd = job_dir(job_id)
     jd.mkdir(parents=True, exist_ok=True)
+    # Claim before expensive fingerprinting; cancellation during preflight
+    # must not be overwritten by a later transition back to RUNNING.
+    with _connect() as conn:
+        claimed = conn.execute("UPDATE jobs SET status=?, started_at=?, stage=? WHERE id=? AND status=?",
+                               (RUNNING, time.time(), "Checking source", job_id, QUEUED)).rowcount
+    if not claimed:
+        return
+    from webapp import integrations
+    integrations.preflight(job)
+    if (get_job(job_id) or {}).get("status") == CANCELED or get_job(job_id) is None:
+        return
     duration = _probe_duration(Path(job["video_path"]))
-    update_job(job_id, status=RUNNING, started_at=time.time(), stage="Starting",
+    update_job(job_id, stage="Starting",
                progress=0, error="", duration=duration)
 
     cmd = build_scan_command(job) if job["kind"] == "scan" else build_render_command(job)
@@ -634,7 +654,11 @@ def _finish_ok(job_id: int, job: dict[str, Any]) -> None:
         else:
             update_job(job_id, stage="Publishing cleaned video", progress=99)
             try:
-                publish_render(stage, out)
+                if json.loads(job["options"] or "{}").get("integration_id"):
+                    from webapp.integrations import publish
+                    publish(job, stage)
+                else:
+                    publish_render(stage, out)
             except Exception as exc:
                 fields.update(
                     status=FAILED,
@@ -655,12 +679,20 @@ def _finish_ok(job_id: int, job: dict[str, Any]) -> None:
 
     if fields.get("status") == DONE and job["kind"] == "scan":
         opts = json.loads(job["options"] or "{}")
+        if opts.get("integration_id"):
+            from webapp.integrations import update_event
+            update_event(opts["integration_id"], state="review")
         if opts.get("auto_render"):
             if queue_render(job_id) is None:
                 update_job(job_id, status=FAILED, error="Could not queue automatic render; check output permissions.")
 
 
 def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -> int | None:
+    with _render_queue_lock:
+        return _queue_render(scan_job_id, overrides=overrides)
+
+
+def _queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -> int | None:
     """Queue a render of a finished scan's EDL."""
     scan = get_job(scan_job_id)
     if not scan or scan["kind"] != "scan" or not scan["edl_path"]:
@@ -705,13 +737,30 @@ def queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) -
         "audio_track": opts.get("audio_track"),
     }
     render_opts.update(overrides or {})
+    if opts.get("integration_id"):
+        from webapp import integrations
+        event = integrations.get_event(opts["integration_id"])
+        if event["state"] not in {"review", "rendering"}:
+            return None
+        if active_job_for(str(video)):
+            return None
+        # Use the original container, never MP4 bytes under an MKV filename.
+        output = video
+        for key in render_opts:
+            if key in opts and key not in {"subs_path", "audio_track"}:
+                render_opts[key] = opts[key]
+        render_opts.update(overrides or {})
+        render_opts.update(integration_id=opts["integration_id"], render_validation="full")
+        return integrations.queue_render(scan, render_opts)
     render_id = create_job(
         "render", str(video), title=scan["title"], preset=scan["preset"],
         options=render_opts, edl_path=scan["edl_path"], output_path=str(output),
         parent_id=scan_job_id,
+        wake=False,
     )
     if scan.get("batch_id"):
         update_job(render_id, batch_id=scan["batch_id"])
+    _wake.set()
     return render_id
 
 
@@ -733,8 +782,9 @@ def _worker_loop() -> None:
         try:
             _run_job(job)
         except Exception as e:  # a worker crash must not stop the queue
-            update_job(job["id"], status=FAILED, finished_at=time.time(),
-                       stage="Failed", error=f"{type(e).__name__}: {e}")
+            if (get_job(job["id"]) or {}).get("status") != CANCELED:
+                update_job(job["id"], status=FAILED, finished_at=time.time(),
+                           stage="Failed", error=f"{type(e).__name__}: {e}")
 
 
 def start_worker() -> None:

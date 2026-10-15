@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import platform
+import secrets
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from webapp import jobs, library, review
+from webapp import integrations, jobs, library, review
 from webapp import settings as settings_store
 from webapp.paths import OUTPUT_DIR, ensure_dirs, media_roots
 
-APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.14")
+APP_VERSION = os.environ.get("CLEANCUT_VERSION", "2.0.0-mac-beta.15")
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["JSON_SORT_KEYS"] = False
@@ -33,6 +36,10 @@ def _job_or_404(job_id: int):
 
 
 def _video_for(job: dict[str, Any]) -> Path | None:
+    event_id = json.loads(job["options"] or "{}").get("integration_id")
+    if event_id and integrations.get_event(event_id)["state"] in {"publishing", "published", "complete"}:
+        # Review timestamps describe the original, not the replaced timeline.
+        return None
     return library.resolve_safe(job["video_path"])
 
 
@@ -61,6 +68,125 @@ def page_job(job_id: int):
 @app.route("/settings")
 def page_settings():
     return render_template("settings.html", version=APP_VERSION, page="settings")
+
+
+@app.route("/integrations")
+def page_integrations():
+    return render_template("integrations.html", version=APP_VERSION, page="integrations")
+
+
+def _integration_admin():
+    # Admin credentials and replacement controls stay on the Mac itself.
+    # LAN webhooks have separate authentication; never trust forwarded headers.
+    try:
+        if not ipaddress.ip_address(request.remote_addr).is_loopback:
+            return _bad("Open Integrations on the CleanCut Mac using localhost (or an SSH tunnel).", 403)
+    except ValueError:
+        return _bad("Local access required.", 403)
+    if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return _bad("Use localhost for integration administration.", 403)
+    if request.method != "GET":
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != request.host:
+            return _bad("Cross-origin request refused.", 403)
+        if not request.is_json:
+            return _bad("Use application/json.", 415)
+    return None
+
+
+@app.route("/api/integrations", methods=["GET", "POST"])
+def api_integrations():
+    denied = _integration_admin()
+    if denied:
+        return denied
+    try:
+        cfg = integrations.save_config(request.get_json(silent=True)) if request.method == "POST" else integrations.public_config()
+        return jsonify({"settings": cfg, "events": integrations.events()})
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc))
+
+
+@app.route("/api/integrations/token", methods=["POST"])
+def api_integration_token():
+    denied = _integration_admin()
+    if denied:
+        return denied
+    response = jsonify({"token": integrations.config()["token"]})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/integrations/<name>/test", methods=["POST"])
+def api_integration_test(name):
+    denied = _integration_admin()
+    if denied:
+        return denied
+    if name not in integrations.SERVICES:
+        return _bad("Unknown service.")
+    try:
+        service = integrations.config()["services"][name]
+        status = integrations.arr(service, "system/status")
+        roots = integrations.arr(service, "rootfolder")
+        return jsonify({"ok": True, "version": status.get("version"),
+                        "roots": [r["path"] for r in roots],
+                        "mount_available": Path(service["local_root"]).is_dir()})
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc))
+
+
+@app.route("/api/integrations/path-test", methods=["POST"])
+def api_integration_path_test():
+    denied = _integration_admin()
+    if denied:
+        return denied
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or body.get("service") not in integrations.SERVICES:
+        return _bad("Choose a service and imported file path.")
+    try:
+        path = integrations.map_path(integrations.config()["services"][body["service"]], body.get("path"))
+        return jsonify({"ok": True, "path": str(path)})
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc))
+
+
+@app.route("/api/integrations/<int:event_id>/recover", methods=["POST"])
+def api_integration_recover(event_id):
+    denied = _integration_admin()
+    if denied:
+        return denied
+    try:
+        integrations.recover(event_id)
+        return jsonify({"ok": True})
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc))
+
+
+@app.route("/api/integrations/<int:event_id>/retry", methods=["POST"])
+def api_integration_retry(event_id):
+    denied = _integration_admin()
+    if denied:
+        return denied
+    try:
+        return jsonify({"ok": True, "job_id": integrations.retry_scan(event_id)})
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc))
+
+
+@app.route("/api/integrations/<name>/webhook", methods=["POST"])
+def api_integration_webhook(name):
+    if name not in integrations.SERVICES:
+        return _bad("Unknown service.", 404)
+    auth = request.authorization
+    supplied = auth.password if auth and auth.type == "basic" and auth.username == "cleancut" else ""
+    token = integrations.config()["token"]
+    if not token or not secrets.compare_digest(supplied or "", token):
+        return _bad("Invalid webhook credentials.", 401)
+    if request.content_length is None or request.content_length > 1024 * 1024:
+        return _bad("Webhook body too large or missing Content-Length.", 413)
+    try:
+        return jsonify(integrations.receive(name, request.get_json(silent=True)))
+    except (ValueError, OSError) as exc:
+        return _bad(str(exc), 409)
 
 
 # --------------------------------------------------------------------------
@@ -143,7 +269,11 @@ def api_delete_jobs():
         if job["status"] in jobs.ACTIVE_STATUSES or any(c["status"] in jobs.ACTIVE_STATUSES for c in children):
             skipped.append(job_id)
             continue
-        jobs.delete_job(job_id)
+        try:
+            jobs.delete_job(job_id)
+        except ValueError:
+            skipped.append(job_id)
+            continue
         removed.append(job_id)
     return jsonify({"deleted": removed, "skipped": skipped})
 
@@ -238,6 +368,8 @@ def api_job(job_id: int):
         return err
     payload = dict(job)
     payload["options"] = json.loads(job["options"] or "{}")
+    if payload["options"].get("integration_id"):
+        payload["integration_state"] = integrations.get_event(payload["options"]["integration_id"])["state"]
     if job["kind"] == "scan" and job["edl_path"] and Path(job["edl_path"]).exists():
         try:
             payload["summary"] = review.summarize(review.load_edl(job["edl_path"]))
@@ -265,7 +397,10 @@ def api_job_cancel(job_id: int):
 
 @app.route("/api/job/<int:job_id>", methods=["DELETE"])
 def api_job_delete(job_id: int):
-    jobs.delete_job(job_id)
+    try:
+        jobs.delete_job(job_id)
+    except ValueError as exc:
+        return _bad(str(exc), 409)
     return jsonify({"ok": True})
 
 
@@ -290,6 +425,8 @@ def api_job_render(job_id: int):
         overrides["render_validation"] = body["render_validation"]
     render_id = jobs.queue_render(job_id, overrides=overrides)
     if render_id is None:
+        if json.loads(job["options"] or "{}").get("integration_id"):
+            return _bad("Import already has active work, was published, or needs recovery. Check Integrations and the NAS mount.", 409)
         return _bad(
             "Could not queue the render. Make sure the source/NAS folder is mounted "
             "and writable, or choose a writable output folder in Settings."
@@ -309,8 +446,9 @@ def api_job_download(job_id: int):
         return _bad("The output file is gone.", 404)
     # conditional=True so the browser can seek in the video rather than
     # downloading a multi-gigabyte file just to check the edit.
+    mime = {".mkv": "video/x-matroska", ".mov": "video/quicktime", ".m4v": "video/x-m4v"}.get(out.suffix.lower(), "video/mp4")
     return send_file(out, as_attachment=False, conditional=True,
-                     download_name=out.name, mimetype="video/mp4")
+                     download_name=out.name, mimetype=mime)
 
 
 # --------------------------------------------------------------------------
@@ -610,6 +748,7 @@ def api_health():
 def main() -> None:
     ensure_dirs()
     jobs.init_db()
+    integrations.init_db()
     jobs.start_worker()
     port = int(os.environ.get("PORT", "3000"))
     host = os.environ.get("HOST", "0.0.0.0")

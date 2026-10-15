@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Integrations - cleancut{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Radarr / Sonarr</h1>
+  <p>Opt a movie or series in with the <code>cleancut</code> tag. SABnzbd downloads normally;
+    CleanCut starts only after Radarr/Sonarr imports the library file.</p>
+  <p class="muted">Configure this page on the CleanCut Mac at localhost, or through an SSH tunnel.
+    API keys stay in a private local configuration file. Blank keys keep existing values.</p>
+  <label class="check"><input type="checkbox" id="integration-enabled"> Enable incoming imports and library replacement</label>
+  <label class="check"><input type="checkbox" id="integration-auto"> Automatically render imported scans without review</label>
+  <p class="muted">Otherwise, review the scan in Jobs and choose Render to approve replacement.
+    These jobs replace the original library file, unlike ordinary Library jobs.
+    Full decode verification is mandatory. Detection is imperfect; review is recommended.</p>
+  <div id="services"></div>
+  <button id="save-integrations" class="primary">Save integration settings</button>
+  <span id="integration-status" role="status"></span>
+</section>
+<section class="panel">
+  <h2>Connect after saving</h2>
+  <ol>
+    <li>On the CleanCut Mac, start with <code>CLEANCUT_HOST=0.0.0.0 ./macos/run.sh</code>
+      when no jobs are running. Allow access only from your trusted LAN; do not port-forward.</li>
+    <li>In each Arr app: Settings → Connect → Webhook. Set URL to
+      <code>http://AI-MAC-IP:3000/api/integrations/radarr/webhook</code> or
+      <code>http://AI-MAC-IP:3000/api/integrations/sonarr/webhook</code>.</li>
+    <li>Use POST, username <code>cleancut</code>, and the shared password below.
+      Set notification tags to <code>cleancut</code> (or your saved tag).</li>
+    <li>Enable the per-file import/download and upgrade triggers only. Leave Grab, Rename,
+      and Sonarr Import Complete off. Test the webhook, then tag the movies/series you want cleaned.</li>
+  </ol>
+  <p>No SABnzbd script or second trigger is needed. Sonarr tags select a whole series, not individual episodes.
+    Existing library files are not automatically submitted by adding a tag.</p>
+  <button id="show-webhook-token" class="ghost">Show webhook password</button>
+  <input id="webhook-token" type="password" readonly autocomplete="off" aria-label="Webhook password">
+  <button id="rotate-webhook-token" class="ghost">Rotate password</button>
+  <p class="muted">Rotating invalidates existing webhook credentials; update both Arr connections.
+    Plain HTTP exposes credentials on the LAN; use a trusted network or a local HTTPS proxy.</p>
+  <h3>Test one imported path</h3>
+  <select id="path-service" aria-label="Path service"><option>radarr</option><option>sonarr</option></select>
+  <input id="server-file" placeholder="/nas/shows/Show/Season 01/Episode.mkv" aria-label="Server file path">
+  <button id="test-path" class="ghost">Test mapping (read-only)</button>
+  <p id="path-result" role="status"></p>
+</section>
+<section class="panel">
+  <h2>Import history and recovery</h2>
+  <p class="muted">Originals are backed up temporarily beside the library file. Backups are removed only after
+    verified publication and a confirmed Arr rescan. A crash or NAS disconnect may require “Recover”.
+    Recovery never overwrites a newer library file. Do not rename/move/upgrade a file during publication.</p>
+  <button id="refresh-imports" class="ghost">Refresh</button>
+  <div id="imports"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='integrations.js', v=version) }}"></script>{% endblock %}
