@@ -159,7 +159,8 @@ class Config:
     # "libx264" = software (best quality, slower)
     # "auto" = videotoolbox on macOS, libx264 elsewhere
     encoder: str = "auto"
-    # Quality target. For libx264: CRF (lower = better). For videotoolbox: q (higher = better).
+    # Lower is better for every encoder. Software uses CRF directly; Apple
+    # hardware uses a separate quality-first mapping (20 -> Apple q=80).
     quality: int = 20
     # none | quick (metadata/duration) | full (decode every output frame)
     render_validation: str = "quick"

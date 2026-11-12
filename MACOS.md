@@ -226,6 +226,23 @@ this timing fix. Old scans still need rescanning to add word-level replacement
 metadata if they predate beta.7. Do not use the already-edited `.clean.mp4` as
 the input for the original scan's timestamps.
 
+## Quality-first hardware encoding (beta.16)
+
+Scene cuts require a video re-encode in the current pipeline. The previous
+Apple quality mapping translated CleanCut quality 20 to VideoToolbox 50/100,
+which could severely reduce bitrate and fine detail. Quality 20 now maps to
+80/100; quality 18 maps to 84/100. Both H.264 and HEVC hardware paths use this
+policy. Software encoders still use the quality number as CRF, unchanged.
+These are different scales, not equivalent quality guarantees. Render logs now
+show the actual encoder quality parameter. Expect larger files, possibly larger
+than the source. Resolution and frame-rate handling are unchanged.
+
+Existing cleaned files are not repaired automatically: re-render the original
+scan from its original media, not from the already-compressed cleaned output.
+Compatible mute-only/soft-subtitle jobs still stream-copy video; changing
+quality does not force those jobs to re-encode. HDR retains its Main10 HEVC
+path. Full decode verification detects damage, not perceptual quality loss.
+
 ## Local library integration (beta.15)
 
 The new **Integrations** page connects tagged Radarr/Sonarr imports to the local

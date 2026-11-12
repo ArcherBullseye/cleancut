@@ -229,7 +229,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
         choices=["auto", "videotoolbox", "hevc_videotoolbox", "libx264", "libx265"],
                    help="Video encoder. auto = videotoolbox on macOS, libx264 elsewhere.")
     p.add_argument("--quality", type=int, default=None,
-                   help="Quality (libx264 CRF; lower=better). Default depends on preset.")
+                   help="Quality (lower=better for all encoders). Software uses CRF; Apple uses a separate quality-first mapping (20 -> 80/100). Default depends on preset.")
     p.add_argument(
         "--verify-render", choices=["none", "quick", "full"], default=None,
         help="Post-render validation: metadata only or a full frame decode.",

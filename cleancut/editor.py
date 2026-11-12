@@ -74,6 +74,17 @@ def _playback_rate_args(source) -> list[str]:
     return ["-r", "30", "-fps_mode", "cfr"]
 
 
+def videotoolbox_quality(quality: int) -> int:
+    """Map CleanCut's lower-is-better control to Apple's 0–100 quality scale.
+
+    This is a quality-first policy, NOT an equivalence to x264/x265 CRF.
+    The former 90 - 2*q mapping gave only Apple q=50 at our default 20,
+    aggressively compressing detailed 1080p sources. Default 20 now uses 80;
+    18 uses 84. Clamp below 100 to avoid extreme hardware output sizes.
+    """
+    return max(30, min(95, 120 - quality * 2))
+
+
 def _video_encoder_args(encoder: str, quality: int, source=None) -> list[str]:
     """Return ffmpeg flags for a broadly playable H.264 stream.
 
@@ -83,16 +94,14 @@ def _video_encoder_args(encoder: str, quality: int, source=None) -> list[str]:
     macOS, browsers, TVs, and media servers.
     """
     if encoder == "videotoolbox":
-        # videotoolbox uses -q:v (higher = better). Map CRF-ish quality to a sensible q.
-        # CRF 18 ~ q 54, CRF 20 ~ q 50, CRF 23 ~ q 44.
-        q = max(30, min(100, 90 - quality * 2))
+        q = videotoolbox_quality(quality)
         return [
             "-c:v", "h264_videotoolbox", "-q:v", str(q), "-b:v", "0",
             "-allow_sw", "1",
             "-pix_fmt", "yuv420p", *_playback_rate_args(source),
         ]
     if encoder == "hevc_videotoolbox":
-        q = max(30, min(100, 90 - quality * 2))
+        q = videotoolbox_quality(quality)
         return [
             "-c:v", "hevc_videotoolbox", "-q:v", str(q), "-b:v", "0",
             "-allow_sw", "1",

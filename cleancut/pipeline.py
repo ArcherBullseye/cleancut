@@ -18,6 +18,7 @@ from cleancut.editor import (
     normalize_cuts,
     probe_duration,
     shift_ranges_after_cuts,
+    videotoolbox_quality,
 )
 from cleancut.scenes import Shot
 from cleancut.subtitles import (
@@ -469,7 +470,10 @@ def render(
         mutes = [*edl_to_ranges(edl, "mute"), *edl_to_ranges(edl, "replace")]
         replace_audio = config.profanity_audio == "replace" or bool(edl.by_action("replace"))
         encoder = config.resolved_encoder(opts.video)
-        console.print(f"[cyan]Encoder[/cyan]: {encoder} (q={config.quality})")
+        target = (f"Apple quality={videotoolbox_quality(config.quality)}/100"
+                  if encoder in {"videotoolbox", "hevc_videotoolbox"}
+                  else f"CRF={config.quality}")
+        console.print(f"[cyan]Encoder[/cyan]: {encoder} (CleanCut quality={config.quality}; {target})")
 
         speech_clips = []
         background_clips = []

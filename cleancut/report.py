@@ -137,7 +137,7 @@ def build_plan(
     # Render plan
     lines.append("Render plan")
     lines.append("-" * 70)
-    lines.append(f"  Encoder:         {config.resolved_encoder()} (q={config.quality})")
+    lines.append(f"  Encoder:         {config.resolved_encoder()} (CleanCut quality={config.quality})")
     lines.append(f"  Burn-in subs:    {'yes (softened)' if burn_subs else 'no'}")
     lines.append("")
     lines.append("Run with `cleancut clean` (same flags) to actually do it.")
