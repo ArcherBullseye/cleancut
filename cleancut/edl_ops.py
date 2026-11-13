@@ -42,8 +42,10 @@ def fmt_ffmpeg_timestamp(seconds: float) -> str:
 def cuts_for_review(
     edl: EditDecisionList, include_violence: bool = False,
 ) -> list[EditDecision]:
-    """Accepted cut decisions in start order; violence-only cuts hidden unless asked."""
-    cuts = [d for d in edl.decisions if d.action == "cut" and d.accepted]
+    """Accepted cuts and pending nudity suggestions, in start order."""
+    cuts = [d for d in edl.decisions if d.action == "cut" and (
+        d.accepted or ("nudity" in d.category.split("+") and d.reason.startswith("[needs review;"))
+    )]
     if not include_violence:
         cuts = [d for d in cuts if set(d.category.split("+")) & FOCAL_CATEGORIES]
     return sorted(cuts, key=lambda d: d.start)

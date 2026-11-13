@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 
 from cleancut.config import Config
 from cleancut.edl import EditDecision, EditDecisionList
 from cleancut.pipeline import PipelineOptions, build_edl
 from cleancut.scenes import Shot
 from cleancut.subtitles import Subtitle
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,6 +92,48 @@ class TestBuildEdlFullPipeline:
 
         sources = {d.source for d in edl.decisions}
         assert "visual" in sources
+
+    def test_all_frames_uses_the_original_video_and_surfaces_failures(self, tmp_path):
+        video, proxy = tmp_path / "movie.mp4", tmp_path / "proxy.mp4"
+        config = _minimal_config()
+        config.nudity_all_frames = True
+        opts = PipelineOptions(video=video, use_visual=True, use_scenes=True)
+
+        with patch("cleancut.pipeline._get_subtitles_and_words", return_value=([], [])), \
+             patch("cleancut.proxy.analysis_source", return_value=proxy), \
+             patch("cleancut.pipeline._detect_scenes_if_enabled", return_value=[]) as detect_scenes, \
+             patch("cleancut.visual.scan_video", side_effect=RuntimeError("Cannot open video")) as scan, \
+             pytest.raises(RuntimeError, match="Every-frame nudity scan failed: Cannot open video"):
+            build_edl(opts, config)
+
+        detect_scenes.assert_called_once_with(opts, config, proxy)
+        scan.assert_called_once_with(video, config)
+
+    def test_second_opinion_compares_detector_frames_and_searches_the_original(self, tmp_path):
+        from cleancut.visual import NudityEvidence
+
+        video, proxy = tmp_path / "movie.mp4", tmp_path / "proxy.mp4"
+        config = _minimal_config()
+        config.nudity_second_opinion = True
+        opts = PipelineOptions(video=video, use_visual=True, use_scenes=False)
+        original = _make_decision(1.0, 2.0, "nudity", "visual")
+        suggestion = EditDecision(3.0, 4.0, "cut", "nudity", source="ollama-nudity", accepted=False)
+        evidence_frame = NudityEvidence(24, 1.0, [0, 0, 10, 10])
+
+        def scan(path, cfg, *, evidence):
+            assert path == proxy and cfg is config
+            evidence.append(evidence_frame)
+            return EditDecisionList(decisions=[original])
+
+        with patch("cleancut.pipeline._get_subtitles_and_words", return_value=([], [])), \
+             patch("cleancut.proxy.analysis_source", return_value=proxy), \
+             patch("cleancut.visual.scan_video", side_effect=scan), \
+             patch("cleancut.nudity_review.review_nudity", return_value=[original, suggestion]) as review:
+            edl, _ = build_edl(opts, config)
+
+        review.assert_called_once_with(video, proxy, [original], [evidence_frame], config)
+        assert edl.summary() == {"cut:nudity": 1}
+        assert [(d.source, d.accepted) for d in edl] == [("visual", True), ("ollama-nudity", False)]
 
     def test_subtitle_dialogue_decisions_included(self, tmp_path):
         video = tmp_path / "movie.mp4"

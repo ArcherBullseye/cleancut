@@ -74,11 +74,15 @@ test('batch submit uses shared settings and navigates to Jobs', async () => {
   s.run(`addFiles([{path:'/a.mp4',name:'a'},{path:'/b.mp4',name:'b'}])`);
   s.node('word-end-padding-ms').value = '300';
   s.node('auto-render').checked = true;
+  s.node('nudity-all-frames').checked = true;
+  s.node('nudity-second-opinion').checked = true;
   await s.run('startScan()');
   assert.equal(s.sent[0].url, '/api/scan');
   assert.deepEqual(Array.from(s.sent[0].body.paths), ['/a.mp4', '/b.mp4']);
   assert.equal(s.sent[0].body.word_end_padding_ms, 300);
   assert.equal(s.sent[0].body.auto_render, true);
+  assert.equal(s.sent[0].body.nudity_all_frames, true);
+  assert.equal(s.sent[0].body.nudity_second_opinion, true);
   assert.equal(s.context.window.location.href, '/jobs');
 });
 

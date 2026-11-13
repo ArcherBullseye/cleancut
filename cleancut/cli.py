@@ -34,6 +34,8 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("visual_threshold", "visual_threshold"),
     ("visual_sample_seconds", "visual_sample_seconds"),
     ("nudity_model", "nudity_model"),
+    ("nudity_all_frames", "nudity_all_frames"),
+    ("nudity_second_opinion", "nudity_second_opinion"),
     ("nudity_strong_threshold", "nudity_strong_threshold"),
     ("nudity_confirmation_threshold", "nudity_confirmation_threshold"),
     ("word_end_padding_ms", "word_end_padding_ms"),
@@ -154,6 +156,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--visual-sample-seconds", type=float, default=None, help="Sample 1 frame every N seconds.")
     p.add_argument("--nudity-model", choices=["accurate", "fast"], default=None,
                    help="Local NudeNet model: accurate 640m or bundled fast 320n.")
+    p.add_argument("--nudity-all-frames", action="store_true", default=None,
+                   help="Run NudeNet on every frame of the original video (slowest).")
+    p.add_argument("--nudity-second-opinion", action="store_true", default=None,
+                   help="Use the configured Ollama vision model to check NudeNet hits and look for more nudity.")
     p.add_argument("--nudity-strong-threshold", type=float, default=None,
                    help="Confidence at which one explicit hit is enough after rescan.")
     p.add_argument("--nudity-confirmation-threshold", type=float, default=None,
@@ -466,7 +472,9 @@ def _review_loop(cuts, video: Path, subs: list, out_dir: Path) -> None:
                 f"({d.duration:.1f}s)  [cyan]{d.category}[/cyan]  "
                 f"[white]via {d.source}[/white]"
             )
-            console.print(f"  reason: {d.reason[:MAX_REASON_LENGTH]}")
+            if not d.accepted:
+                console.print("  Unselected. Press y to accept this cut.")
+            console.print(f"  reason: {d.reason[:MAX_REASON_LENGTH]}", markup=False)
             if lines:
                 console.print("  dialogue:")
                 for ln in lines[:10]:
@@ -480,6 +488,7 @@ def _review_loop(cuts, video: Path, subs: list, out_dir: Path) -> None:
                 if not ans:
                     continue
                 if ans == "y":
+                    d.accepted = True
                     break
                 if ans == "n":
                     d.accepted = False

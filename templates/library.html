@@ -43,7 +43,7 @@
       <label class="preset">
         <input type="radio" name="preset" value="thorough">
         <span class="preset-name">Thorough</span>
-        <span class="preset-desc">Densest nudity scan plus local Ollama LLM/VLM and audio signals; slowest.</span>
+        <span class="preset-desc">Denser sampling plus local Ollama LLM/VLM and audio signals.</span>
       </label>
     </div>
   </div>
@@ -71,6 +71,10 @@
       an ending remains audible. Applies to new scans. Background preservation can still
       leak speech; disable it in Settings if that happens.</p>
     <label class="check"><input type="checkbox" id="use-visual" checked> Run the NudeNet visual scan</label>
+    <label class="check"><input type="checkbox" id="nudity-all-frames"> Scan every frame for nudity (slowest)</label>
+    <p class="muted small">Uses the original video with NudeNet visual scanning enabled. Helps catch brief appearances between sampled frames.</p>
+    <label class="check"><input type="checkbox" id="nudity-second-opinion"> Get an Ollama second opinion on nudity (slow)</label>
+    <p class="muted small">With NudeNet enabled, the vision model checks flagged frames and scans one frame per second for more. Inspect disagreements and new suggestions in Review.</p>
     <label class="check"><input type="checkbox" id="use-local-ai" checked> Use local Ollama AI for dialogue context and scene vision</label>
     <label class="check"><input type="checkbox" id="allow-solo-visual"> Allow non-nudity VLM-only cuts without corroboration</label>
     <label class="check"><input type="checkbox" id="auto-render"> Render automatically when the scan finishes (skips review)</label>

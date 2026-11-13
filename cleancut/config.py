@@ -96,6 +96,8 @@ class Config:
     visual_threshold: float = 0.45
     # Accurate uses the official 640m model; fast uses bundled 320n.
     nudity_model: str = "accurate"
+    nudity_all_frames: bool = False
+    nudity_second_opinion: bool = False
     nudity_strong_threshold: float = 0.90
     # Repetition of a weak prediction is not independent confirmation.
     nudity_confirmation_threshold: float = 0.75

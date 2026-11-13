@@ -117,7 +117,10 @@ function renderSummary(summary) {
       ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut avoids that unless the source format needs conversion for playback.`
       : "No cuts accepted. Compatible H.264/HEVC video can be copied; audio replacement/separation may still take time. Other formats are converted for macOS/browser playback.";
     if (summary.nudity_review) {
-      note.textContent += ` ${summary.nudity_review} uncertain nudity suggestion(s) are unselected and will remain in the output. Preview them and accept any that show actual nudity.`;
+      note.textContent += ` ${summary.nudity_review} nudity suggestion(s) are unselected. Preview and accept any that show actual nudity.`;
+    }
+    if (summary.nudity_disagreements) {
+      note.textContent += ` Ollama disagreed with NudeNet on ${summary.nudity_disagreements} edit(s). Check the verdicts before rendering.`;
     }
   }
 }

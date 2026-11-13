@@ -63,6 +63,8 @@ DEFAULTS: dict[str, Any] = {
     "output_dir": "",
     "auto_render": False,
     "use_visual": True,
+    "nudity_all_frames": False,
+    "nudity_second_opinion": False,
     "allow_solo_visual": False,
     "word_end_padding_ms": 200,
     "preserve_background": False,
@@ -139,7 +141,8 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
                 not isinstance(value, list) or any(cat not in tuple(DEFAULTS["actions"]) for cat in value)
             ):
                 continue
-            if key in {"auto_render", "use_visual", "allow_solo_visual", "local_ai_enabled"} and not isinstance(value, bool):
+            if key in {"auto_render", "use_visual", "nudity_all_frames", "nudity_second_opinion", "allow_solo_visual",
+                       "local_ai_enabled"} and not isinstance(value, bool):
                 continue
             if key == "preserve_background" and not isinstance(value, bool):
                 continue

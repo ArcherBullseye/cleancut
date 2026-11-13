@@ -296,7 +296,9 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
     # preserving 720p proxy avoids decoding every 4K frame through OpenCV while
     # all edit decisions remain aligned to the original timeline.
     analysis_video = opts.video
-    if config.analysis_proxy_enabled and (opts.use_scenes or opts.use_visual):
+    run_nudity = opts.use_visual and "nudity" in config.enabled_categories
+    sampled_nudity = run_nudity and not config.nudity_all_frames
+    if config.analysis_proxy_enabled and (opts.use_scenes or sampled_nudity):
         try:
             from cleancut.proxy import analysis_source
 
@@ -313,18 +315,37 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
     # Shot boundaries are used to snap confirmed edit ranges to natural cuts.
     shots = _detect_scenes_if_enabled(opts, config, analysis_video)
 
-    if opts.use_visual and "nudity" in config.enabled_categories:
+    if run_nudity:
         from cleancut.visual import scan_video
+
+        video = opts.video if config.nudity_all_frames else analysis_video
+        coverage = "every source frame" if config.nudity_all_frames else (
+            f"sample={config.visual_sample_seconds}s, confirm={config.nudity_rescan_fps:g} fps"
+        )
         console.print(
             f"[cyan]Visual scan[/cyan] "
-            f"({config.nudity_model}, sample={config.visual_sample_seconds}s, "
-            f"candidate={config.visual_threshold}, "
-            f"confirm={config.nudity_rescan_fps:g} fps)"
+            f"({config.nudity_model}, {coverage}, candidate={config.visual_threshold})"
         )
-        visual_decisions = _run_detector(
-            "Visual scan",
-            lambda: scan_video(analysis_video, config, shots=shots or None).decisions,
-        )
+        if config.nudity_second_opinion:
+            from cleancut.nudity_review import review_nudity
+
+            evidence = []
+            try:
+                visual_decisions = scan_video(video, config, evidence=evidence).decisions
+                visual_decisions = review_nudity(opts.video, video, visual_decisions, evidence, config)
+            except Exception as exc:
+                raise RuntimeError(f"Nudity second opinion failed: {exc}") from exc
+        elif config.nudity_all_frames:
+            # An explicitly requested exhaustive scan must finish before rendering can proceed.
+            try:
+                visual_decisions = scan_video(video, config).decisions
+            except Exception as exc:
+                raise RuntimeError(f"Every-frame nudity scan failed: {exc}") from exc
+        else:
+            visual_decisions = _run_detector(
+                "Visual scan",
+                lambda: scan_video(video, config, shots=shots or None).decisions,
+            )
         edl.extend(visual_decisions)
 
     edl = edl.pad(config.pad_seconds, word_end_padding_ms=config.word_end_padding_ms)

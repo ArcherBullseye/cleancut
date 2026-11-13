@@ -77,6 +77,24 @@ def probe_duration(path: Path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
+def probe_video_timing(path: Path) -> tuple[float, float, float | None]:
+    """Return the video start offset, container duration, and video stream end in seconds."""
+    out = subprocess.check_output([
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "format=start_time,duration:stream=start_time,duration",
+        "-of", "json", str(path),
+    ])
+    info = json.loads(out)
+    container = info["format"]
+    stream = info["streams"][0]
+    container_start = float(container.get("start_time", 0))
+    stream_start = float(stream.get("start_time", container_start))
+    offset = stream_start - container_start
+    stream_duration = stream.get("duration", "N/A")
+    end = None if stream_duration == "N/A" else offset + float(stream_duration)
+    return offset, float(container["duration"]), end
+
+
 def probe_streams(video: Path) -> list[Stream]:
     """Return every stream in the file."""
     if not shutil.which("ffprobe"):

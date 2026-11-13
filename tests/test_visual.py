@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +16,7 @@ from cleancut.edl import EditDecisionList
 from cleancut.nudity_model import NudityModel
 from cleancut.scenes import Shot
 from cleancut.visual import (
+    NudityEvidence,
     _confirmed_edl,
     _dense_times,
     _infer_samples,
@@ -143,6 +146,54 @@ def test_no_candidates_returns_empty_edl(tmp_path):
         result = scan_video(video, _config(), use_cache=False)
     assert isinstance(result, EditDecisionList)
     assert not result.decisions
+
+
+def test_all_frames_finds_a_flash_and_uses_its_source_timestamps(tmp_path, monkeypatch):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Requires FFmpeg")
+    cv2 = pytest.importorskip("cv2")
+    video = tmp_path / "flash.mkv"
+    # Put white on frame 1. Its PTS is .04s, and the following frame is at .24s.
+    # A half-second sample would miss it, and frame index / average FPS is wrong.
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=32x32:r=25:d=0.48",
+        "-vf", "drawbox=c=white:t=fill:enable='eq(n,1)',setpts='PTS+if(gte(N,2),4,0)'",
+        "-fps_mode", "vfr", "-c:v", "ffv1", str(video),
+    ], check=True)
+    monkeypatch.setattr("cleancut.cache.CACHE_DIR", tmp_path / "cache")
+
+    batch_sizes = []
+
+    def detect_batch(frames, batch_size):
+        batch_sizes.append(batch_size)
+        return [HIT if frame.mean() > 200 else [] for frame in frames]
+
+    detector = SimpleNamespace(detect_batch=detect_batch)
+    config = _config(visual_sample_seconds=0.5, nudity_temporal_padding_seconds=0)
+    with patch("cleancut.visual.resolve_nudity_model", return_value=MODEL), \
+         patch("cleancut.visual._open_detector", return_value=(cv2, detector)):
+        assert not scan_video(video, config).decisions
+        batch_sizes.clear()
+        config.nudity_all_frames = True
+        evidence: list[NudityEvidence] = []
+        edl = scan_video(video, config, evidence=evidence)
+        assert len(evidence) == 1 and evidence[0].frame == 1
+        cached_evidence: list[NudityEvidence] = []
+        assert scan_video(video, config, evidence=cached_evidence) == edl
+        assert cached_evidence == evidence
+    assert sum(batch_sizes) == 12
+    cut, = edl.by_action("cut")
+    assert (cut.start, cut.end) == pytest.approx((0.04, 0.24))
+
+
+def test_all_frames_requires_temporally_separated_confirmation():
+    config = _config(nudity_all_frames=True)
+    hit = [{"class": "FEMALE_BREAST_EXPOSED", "score": 0.8}]
+    observations = {n / 60: hit for n in range(3)}
+    weak = _confirmed_edl(observations, 10, config, "cut", object())
+    assert len(weak.decisions) == 1 and not weak.decisions[0].accepted
+    observations.update({0.1: hit, 0.2: hit})
+    assert len(_confirmed_edl(observations, 10, config, "cut", object()).by_action("cut")) == 1
 
 
 def test_cache_hit_skips_detector(tmp_path):

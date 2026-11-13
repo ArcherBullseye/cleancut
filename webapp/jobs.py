@@ -46,6 +46,8 @@ _STAGE_MARKERS: list[tuple[str, str]] = [
     ("Scanning", "Scanning dialogue"),
     ("Detecting shot boundaries", "Detecting shots"),
     ("Visual scan", "Visual scan"),
+    ("Checking NudeNet candidates", "Checking NudeNet candidates"),
+    ("Looking for additional nudity", "Looking for additional nudity"),
     ("LLM dialogue scan", "LLM dialogue scan"),
     ("Audio event scan", "Audio event scan"),
     ("Density clustering", "Density clustering"),
@@ -390,7 +392,10 @@ def _ollama_flags(opts: dict[str, Any], preset: str) -> list[str]:
     retrying a dead connection."""
     host = (opts.get("ollama_host") or "").strip()
     if not host:
-        return ["--no-llm", "--no-vlm"]
+        args = ["--no-llm", "--no-vlm"]
+        if opts.get("nudity_second_opinion") and opts.get("vlm_model"):
+            args += ["--vlm-model", opts["vlm_model"]]
+        return args
     args = ["--llm-host", host]
     if opts.get("llm_model"):
         args += ["--llm-model", opts["llm_model"]]
@@ -427,6 +432,10 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         cmd.append("--use-audio-events")
     if not opts.get("use_visual", True):
         cmd.append("--no-visual")
+    if opts.get("nudity_all_frames"):
+        cmd.append("--nudity-all-frames")
+    if opts.get("nudity_second_opinion"):
+        cmd.append("--nudity-second-opinion")
     if not opts.get("analysis_proxy", True):
         cmd.append("--no-analysis-proxy")
     elif opts.get("analysis_height"):

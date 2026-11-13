@@ -124,11 +124,15 @@ def build_plan(
         f"  Shot boundaries: {'on' if use_scenes else 'off'} "
         f"(threshold {config.scene_threshold})"
     )
+    coverage = "every source frame" if config.nudity_all_frames else (
+        f"sample {config.visual_sample_seconds}s, rescan {config.nudity_rescan_fps:g} fps"
+    )
     lines.append(
         f"  Visual NudeNet:  {'on' if use_visual else 'off'} "
-        f"(sample {config.visual_sample_seconds}s, threshold {config.visual_threshold}, "
-        f"shot-aware fraction {config.visual_shot_hit_fraction})"
+        f"({coverage}, threshold {config.visual_threshold})"
     )
+    if config.nudity_second_opinion and use_visual and "nudity" in config.enabled_categories:
+        lines.append(f"  Nudity second opinion: {config.vlm_model} (verification and full-timeline sampling)")
     lines.append(
         f"  Snap cuts to shots: {'yes' if config.snap_cuts_to_scenes else 'no'}"
     )
@@ -173,8 +177,12 @@ def build_results_report(
     lines.append("")
 
     decisions = [d for d in edl.decisions if d.accepted]
+    pending = [d for d in edl.decisions if not d.accepted and d.reason.startswith("[needs review;")]
+    if pending:
+        lines.append(f"{len(pending)} unselected nudity suggestion(s). Open the EDL in Review to inspect them.")
+        lines.append("")
     if not decisions:
-        lines.append("No decisions emitted — nothing flagged.")
+        lines.append("No accepted decisions." if pending else "No decisions emitted — nothing flagged.")
         return "\n".join(lines)
 
     n_mute = sum(1 for d in decisions if d.action == "mute")

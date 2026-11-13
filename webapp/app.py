@@ -321,6 +321,12 @@ def api_scan():
     word_padding = body.get("word_end_padding_ms", cfg["word_end_padding_ms"])
     if type(word_padding) is not int or not 0 <= word_padding <= 500:
         return _bad("Word ending buffer must be between 0 and 500 milliseconds.")
+    nudity_all_frames = body.get("nudity_all_frames", cfg["nudity_all_frames"])
+    if not isinstance(nudity_all_frames, bool):
+        return _bad("Scan every frame must be on or off.")
+    nudity_second_opinion = body.get("nudity_second_opinion", cfg["nudity_second_opinion"])
+    if not isinstance(nudity_second_opinion, bool):
+        return _bad("Nudity second opinion must be on or off.")
 
     local_ai = bool(body.get("use_local_ai", cfg["local_ai_enabled"]))
     options: dict[str, Any] = {
@@ -334,6 +340,8 @@ def api_scan():
         "output_location": cfg["output_location"],
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
         "use_visual": bool(body.get("use_visual", cfg["use_visual"])),
+        "nudity_all_frames": nudity_all_frames,
+        "nudity_second_opinion": nudity_second_opinion,
         "allow_solo_visual": bool(body.get("allow_solo_visual", cfg["allow_solo_visual"])),
         "word_end_padding_ms": word_padding,
         "analysis_height": cfg["analysis_height"],
@@ -353,6 +361,8 @@ def api_scan():
         "preset": preset, "categories": categories, "actions": actions,
         "prefer_language": options["prefer_language"], "auto_render": options["auto_render"],
         "local_ai_enabled": local_ai, "use_visual": options["use_visual"],
+        "nudity_all_frames": nudity_all_frames,
+        "nudity_second_opinion": nudity_second_opinion,
         "allow_solo_visual": options["allow_solo_visual"],
         "word_end_padding_ms": word_padding,
     })

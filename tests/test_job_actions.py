@@ -36,7 +36,8 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         "path": str(first), "preset": "fast", "categories": ["profanity", "nudity"],
         "actions": {"profanity": "replace", "nudity": "cut"}, "prefer_language": "fra",
         "auto_render": True, "use_visual": False, "use_local_ai": False,
-        "allow_solo_visual": True, "word_end_padding_ms": 300,
+        "allow_solo_visual": True, "word_end_padding_ms": 300, "nudity_all_frames": True,
+        "nudity_second_opinion": True,
     }
     with patch("webapp.app.library.resolve_safe", side_effect=lambda path: first if path == str(first) else second):
         response = local_jobs.post("/api/scan", json=choices)
@@ -48,6 +49,8 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert remembered["preset"] == "fast" and remembered["prefer_language"] == "fra"
         assert remembered["auto_render"] and remembered["allow_solo_visual"]
         assert remembered["word_end_padding_ms"] == 300
+        assert remembered["nudity_all_frames"] is True
+        assert remembered["nudity_second_opinion"] is True
         assert not remembered["use_visual"] and not remembered["local_ai_enabled"]
         # A fresh read from disk / restarted job database retains defaults.
         jobs.init_db()
@@ -61,6 +64,8 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert second_opts["word_end_padding_ms"] == 300
         command = jobs.build_scan_command(second_job)
         assert command[command.index("--word-end-padding-ms") + 1] == "300"
+        assert "--nudity-all-frames" in command
+        assert "--nudity-second-opinion" in command
     settings.save({"actions": {"profanity": "mute"}})
     assert json.loads(jobs.get_job(job_id)["options"])["actions"]["profanity"] == "replace"
 
@@ -69,6 +74,8 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
     {"actions": {"nudity": "replace"}}, {"actions": {"profanity": "bogus"}},
     {"actions": []}, {"categories": ["bogus"]}, {"categories": None},
     {"word_end_padding_ms": 501}, {"word_end_padding_ms": -1}, {"word_end_padding_ms": "200"},
+    {"nudity_all_frames": "on"},
+    {"nudity_second_opinion": "on"},
 ])
 def test_invalid_scan_choices_do_not_persist(local_jobs, tmp_path, body):
     video = tmp_path / "movie.mp4"

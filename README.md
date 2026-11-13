@@ -59,6 +59,16 @@ fire. NudeNet automatic cuts require three same-class frames at confidence
 0.75+ or one at 0.90+; repeated weaker results remain unselected for review.
 Nudity can be silent and does not require dialogue. Broad scene cuts can snap
 to shot boundaries; NudeNet and word cuts retain their precise ranges.
+To catch brief appearances between sampled frames, enable **Scan every frame
+for nudity** under **Library → Advanced**, or pass `--nudity-all-frames` to the
+CLI. It runs NudeNet on the original video at its full frame rate and can take
+substantially longer. The regular scan and this option use the selected NudeNet model.
+Enable **Get an Ollama second opinion on nudity** in the same menu (CLI
+`--nudity-second-opinion`) to check the exact NudeNet candidate frames with the
+configured vision model and sample the original video once per second for
+additional nudity. Review shows the model's verdict on each NudeNet candidate.
+New Ollama findings are unselected suggestions, and NudeNet keeps its existing
+automatic cut rules. This adds thousands of vision requests for a feature film.
 Word censorship adds a configurable ending buffer (200 ms by default), even
 when the next word's estimated onset overlaps. This may trim closely following
 speech. See [beta.12 audio fixes](MACOS.md#remaining-word-fragments-beta12) and

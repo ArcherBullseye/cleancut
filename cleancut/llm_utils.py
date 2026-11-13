@@ -12,10 +12,10 @@ def strip_to_json(text: str) -> str:
     return m.group(0) if m else text
 
 
-def make_ollama_client(host: str | None):
+def make_ollama_client(host: str | None, **kwargs):
     """Create an Ollama client, optionally with a custom host."""
     import ollama
-    return ollama.Client(host=host) if host else ollama.Client()
+    return ollama.Client(host=host, **kwargs) if host else ollama.Client(**kwargs)
 
 
 def _message_value(message, key: str) -> str:
