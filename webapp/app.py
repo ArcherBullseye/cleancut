@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import secrets
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -313,7 +314,7 @@ def api_scan():
     if not isinstance(categories, list) or any(cat not in review.CATEGORIES for cat in categories):
         return _bad("Unknown categories.")
     if not isinstance(actions, dict) or any(
-        cat not in review.CATEGORIES or action not in review.ACTIONS
+        cat not in review.CATEGORIES or action not in review.ACTIONS or action == "blur"
         or (action == "replace" and cat != "profanity") for cat, action in actions.items()
     ):
         return _bad("Unknown actions. Replace is only supported for profanity words.")
@@ -327,6 +328,9 @@ def api_scan():
     nudity_second_opinion = body.get("nudity_second_opinion", cfg["nudity_second_opinion"])
     if not isinstance(nudity_second_opinion, bool):
         return _bad("Nudity second opinion must be on or off.")
+    blur_nudity_cut_sex = body.get("blur_nudity_cut_sex", cfg["blur_nudity_cut_sex"])
+    if not isinstance(blur_nudity_cut_sex, bool):
+        return _bad("Blur nudity and cut sex scenes must be on or off.")
 
     local_ai = bool(body.get("use_local_ai", cfg["local_ai_enabled"]))
     options: dict[str, Any] = {
@@ -338,10 +342,12 @@ def api_scan():
         "prefer_language": body.get("prefer_language") or cfg["prefer_language"],
         "output_dir": cfg["output_dir"],
         "output_location": cfg["output_location"],
+        "subtitle_mode": cfg["subtitle_mode"],
         "auto_render": bool(body.get("auto_render", cfg["auto_render"])),
         "use_visual": bool(body.get("use_visual", cfg["use_visual"])),
         "nudity_all_frames": nudity_all_frames,
         "nudity_second_opinion": nudity_second_opinion,
+        "blur_nudity_cut_sex": blur_nudity_cut_sex,
         "allow_solo_visual": bool(body.get("allow_solo_visual", cfg["allow_solo_visual"])),
         "word_end_padding_ms": word_padding,
         "analysis_height": cfg["analysis_height"],
@@ -363,6 +369,7 @@ def api_scan():
         "local_ai_enabled": local_ai, "use_visual": options["use_visual"],
         "nudity_all_frames": nudity_all_frames,
         "nudity_second_opinion": nudity_second_opinion,
+        "blur_nudity_cut_sex": blur_nudity_cut_sex,
         "allow_solo_visual": options["allow_solo_visual"],
         "word_end_padding_ms": word_padding,
     })
@@ -572,6 +579,27 @@ def api_clip(job_id: int):
     out = review.clip(job_id, video, start, end)
     if out is None:
         return _bad("Could not build a preview clip.", 500)
+    return send_file(out, mimetype="video/mp4", conditional=True)
+
+
+@app.route("/api/job/<int:job_id>/blur/<int:index>")
+def api_blur_clip(job_id: int, index: int):
+    job, path, err = _edl_job(job_id)
+    if err:
+        return err
+    video = _video_for(job)
+    if video is None or not video.exists():
+        return _bad("Source video not found.", 404)
+    decisions = review.load_edl(path)["decisions"]
+    if index >= len(decisions) or decisions[index].get("action") != "blur":
+        return _bad("Blur decision not found.", 404)
+    decision = decisions[index]
+    options = json.loads(job["options"] or "{}")
+    try:
+        out = review.blur_clip(job_id, video, decision["start"], decision["end"],
+                               options.get("nudity_model", "accurate"))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        return _bad(f"Could not build blur preview: {exc}", 500)
     return send_file(out, mimetype="video/mp4", conditional=True)
 
 

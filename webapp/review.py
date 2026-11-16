@@ -9,14 +9,16 @@ what the review page shows is exactly what `clean` will apply.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from webapp.paths import job_dir
 
 CATEGORIES = ("profanity", "drugs", "sex", "violence", "nudity")
-ACTIONS = ("mute", "replace", "cut", "keep")
+ACTIONS = ("mute", "replace", "cut", "keep", "blur")
 
 # A preview is for judging one decision, not for watching the film.
 MAX_CLIP_SECONDS = 40.0
@@ -95,6 +97,7 @@ def summarize(data: dict[str, Any]) -> dict[str, Any]:
     cuts = [d for d in accepted if d.get("action") == "cut"]
     mutes = [d for d in accepted if d.get("action") == "mute"]
     replacements = [d for d in accepted if d.get("action") == "replace"]
+    blurs = [d for d in accepted if d.get("action") == "blur"]
     return {
         "total": len(decisions),
         "accepted": len(accepted),
@@ -102,9 +105,12 @@ def summarize(data: dict[str, Any]) -> dict[str, Any]:
         "cuts": len(cuts),
         "mutes": len(mutes),
         "replacements": len(replacements),
+        "blurs": len(blurs),
         "nudity_review": sum(not d.get("accepted", True) and
                              str(d.get("reason", "")).startswith("[needs review;")
                              for d in decisions),
+        "sex_scene_review": sum(not d.get("accepted", True) and d.get("source") == "sexual-activity"
+                               for d in decisions),
         "nudity_disagreements": sum(
             "[Ollama disagrees]" in str(d.get("reason", "")) for d in decisions
         ),
@@ -123,6 +129,8 @@ def apply_edit(data: dict[str, Any], index: int, changes: dict[str, Any]) -> dic
     decision = decisions[index]
     if changes.get("action") == "replace" and "profanity" not in str(decision.get("category", "")).split("+"):
         raise ValueError("Replace is only supported for profanity words.")
+    if changes.get("action") == "blur" and not {"nudity", "sex"}.intersection(decision.get("category", "").split("+")):
+        raise ValueError("Blur is available for nudity and sex decisions.")
     if "accepted" in changes:
         decision["accepted"] = bool(changes["accepted"])
     if changes.get("action") in ACTIONS:
@@ -147,6 +155,8 @@ def add_decision(
         raise ValueError(f"unknown action {action!r}")
     if action == "replace" and category != "profanity":
         raise ValueError("Replace is only supported for profanity words.")
+    if action == "blur" and category not in {"nudity", "sex"}:
+        raise ValueError("Blur is available for nudity and sex decisions.")
     decision = {
         "start": float(start), "end": float(end), "action": action, "category": category,
         "reason": f"manual: {reason}" if reason else "manual",
@@ -223,3 +233,37 @@ def clip(job_id: int, video: Path, start: float, end: float) -> Path | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out if out.exists() and out.stat().st_size > 0 else None
+
+
+def blur_clip(job_id: int, video: Path, start: float, end: float, model: str) -> Path:
+    """Render a short excerpt with the same blur logic used for the export."""
+    from cleancut import cache
+    from cleancut.blur import prepare_blur
+    from cleancut.config import Config
+    from cleancut.editor import Range, apply_mutes_and_subs
+
+    if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+        raise ValueError("Invalid blur preview range.")
+    start = max(0.0, start)
+    end = min(end, start + 8.0)
+    fingerprint = video.stat()
+    key = cache.config_hash(start=start, end=end, model=model, size=fingerprint.st_size,
+                            mtime=fingerprint.st_mtime_ns, version=1)
+    out = _preview_dir(job_id, "blur-clips") / f"{key}.mp4"
+    if out.exists():
+        return out
+    left = round(max(0.0, start - CLIP_LEAD_SECONDS), 2)
+    with tempfile.TemporaryDirectory(prefix=".preview-", dir=out.parent) as work:
+        excerpt = Path(work) / "excerpt.mp4"
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{left:.2f}", "-i", str(video),
+            "-t", f"{end - left + 1:.6f}", "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=640:-2", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", str(excerpt),
+        ], check=True, capture_output=True, timeout=120)
+        config = Config(nudity_model=model)
+        mask = prepare_blur(excerpt, [Range(start-left, end-left)], config, Path(work) / "blur.commands")
+        staged = Path(work) / "preview.mp4"
+        apply_mutes_and_subs(excerpt, [], None, staged, burn_subs=False, validation="quick", blur=mask)
+        staged.replace(out)
+    return out

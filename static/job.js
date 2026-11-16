@@ -107,20 +107,24 @@ function renderSummary(summary) {
   container.appendChild(statTile(summary.mutes, "mutes"));
   container.appendChild(statTile(formatClock(summary.seconds_muted), "muted"));
   container.appendChild(statTile(summary.replacements || 0, "replacements"));
+  if (summary.blurs) container.appendChild(statTile(summary.blurs, "blurs"));
 
   // Cuts always require a full re-encode. A mute-only edit normally copies a
   // compatible H.264/HEVC stream; uncommon formats are converted so the result
   // remains playable in macOS and browsers.
   const note = document.getElementById("render-note");
   if (note) {
-    note.textContent = summary.cuts > 0
-      ? `${summary.cuts} cut${summary.cuts === 1 ? "" : "s"} accepted, so the render re-encodes the whole film -- expect hours. Rejecting every cut avoids that unless the source format needs conversion for playback.`
+    note.textContent = summary.cuts || summary.blurs
+      ? "Accepted cuts and blurs require re-encoding the video."
       : "No cuts accepted. Compatible H.264/HEVC video can be copied; audio replacement/separation may still take time. Other formats are converted for macOS/browser playback.";
     if (summary.nudity_review) {
       note.textContent += ` ${summary.nudity_review} nudity suggestion(s) are unselected. Preview and accept any that show actual nudity.`;
     }
     if (summary.nudity_disagreements) {
       note.textContent += ` Ollama disagreed with NudeNet on ${summary.nudity_disagreements} edit(s). Check the verdicts before rendering.`;
+    }
+    if (summary.sex_scene_review) {
+      note.textContent += ` ${summary.sex_scene_review} possible sex scene(s) are unselected for review.`;
     }
   }
 }
@@ -146,7 +150,8 @@ function decisionCard(decision) {
   const actionSelect = el("select", {
     onchange: (e) => edit(decision.index, { action: e.target.value }),
   });
-  for (const action of ACTIONS) {
+  const canBlur = String(decision.category || "").split("+").some(category => ["sex", "nudity"].includes(category));
+  for (const action of canBlur ? [...ACTIONS, "blur"] : ACTIONS) {
     if (action === "replace" && headCategory !== "profanity" && decision.action !== "replace") continue;
     const option = el("option", { value: action, text: actionLabel(action) });
     if (decision.action === action) option.selected = true;
@@ -195,7 +200,7 @@ function decisionCard(decision) {
     el("div", { class: "head" }, [
       el("span", { class: "time", text: `${decision.start_label} – ${decision.end_label}` }),
       el("span", { class: `tag ${decision.action}`, text:
-        !accepted && (decision.reason || "").startsWith("[needs review;") ? "review only" : decision.action }),
+        !accepted && (decision.reason || "").startsWith("[needs review") ? "review only" : decision.action }),
       el("span", { class: "tag", text: decision.category || "?" }),
       el("span", { class: "tag", text: decision.source || "?" }),
       el("span", { class: "muted small", text: `${decision.duration.toFixed(1)}s` }),
@@ -207,7 +212,7 @@ function decisionCard(decision) {
       actionSelect,
       ...speechControls,
       el("button", {
-        class: "ghost", text: "Preview clip",
+        class: "ghost", text: decision.action === "blur" ? "Preview blur" : "Preview clip",
         onclick: (e) => showClip(card, decision, e.target),
       }),
       el("button", {
@@ -270,9 +275,12 @@ async function showBackground(card, decision, button) {
 function showClip(card, decision, button) {
   if (card.querySelector("video")) return;
   if (button) { button.disabled = true; button.textContent = "Building..."; }
+  const blurred = decision.action === "blur" && button;
+  const label = blurred ? "Preview blur" : "Preview clip";
   const video = el("video", {
     controls: "", preload: "metadata", autoplay: "",
-    src: `/api/job/${JOB_ID}/clip?start=${decision.start.toFixed(2)}&end=${decision.end.toFixed(2)}`,
+    src: blurred ? `/api/job/${JOB_ID}/blur/${decision.index}` :
+      `/api/job/${JOB_ID}/clip?start=${decision.start.toFixed(2)}&end=${decision.end.toFixed(2)}`,
   });
   video.addEventListener("loadeddata", () => {
     if (button) { button.disabled = false; button.textContent = "Hide clip"; }
@@ -280,13 +288,17 @@ function showClip(card, decision, button) {
   video.addEventListener("error", () => {
     toast("Could not build a preview for that range.", true);
     video.remove();
-    if (button) { button.disabled = false; button.textContent = "Preview clip"; }
+    if (button) {
+      button.disabled = false;
+      button.textContent = label;
+      button.onclick = (e) => showClip(card, decision, e.target);
+    }
   });
   card.querySelector(".body").appendChild(video);
   if (button) {
     button.onclick = () => {
       video.remove();
-      button.textContent = "Preview clip";
+      button.textContent = label;
       button.onclick = (e) => showClip(card, decision, e.target);
     };
   }

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class EditDecision:
     start: float            # seconds
     end: float              # seconds
-    action: str             # "mute" | "replace" | "cut" | "keep"
+    action: str             # "mute" | "replace" | "cut" | "keep" | "blur"
     category: str           # "profanity" | "drugs" | "sex" | "violence" | "nudity"
     reason: str = ""        # short human-readable why
     text_before: str = ""   # original subtitle text (if dialogue-based)
@@ -33,7 +33,7 @@ class EditDecision:
 # the user configures an action per base category. The strongest action any
 # component asks for wins, so a scene that is both keep-violence and cut-sex is
 # still cut, and one that is only keep-violence is dropped.
-_ACTION_STRENGTH = {"keep": 0, "replace": 1, "mute": 2, "cut": 3}
+_ACTION_STRENGTH = {"keep": 0, "replace": 1, "mute": 2, "blur": 2, "cut": 3}
 
 
 def resolve_action(
@@ -128,7 +128,8 @@ class EditDecisionList:
         ranked = _ACTION_STRENGTH
         # Review-only suggestions must never enlarge or change an accepted
         # edit. Merge each acceptance state independently, then restore time order.
-        items = sorted(self.decisions, key=lambda d: (not d.accepted, d.start))
+        # Regional video edits coexist with audio edits and scene cuts.
+        items = sorted(self.decisions, key=lambda d: (d.action == "blur", not d.accepted, d.start))
         # Copy before extending in place — callers' decision objects (e.g. ones
         # loaded from an EDL file) must not be silently modified.
         merged: list[EditDecision] = [replace(items[0])]
@@ -142,7 +143,7 @@ class EditDecisionList:
             different_audio = {d.action, last.action} == {"mute", "replace"}
             merge_gap = 0.0 if word_mutes or different_audio else gap
             overlaps = d.start < last.end if different_audio else d.start <= last.end + merge_gap
-            if overlaps and d.accepted == last.accepted:
+            if overlaps and d.accepted == last.accepted and (d.action == "blur") == (last.action == "blur"):
                 # Overlap or near-touching: merge.
                 new_action = last.action if ranked[last.action] >= ranked[d.action] else d.action
                 last.end = max(last.end, d.end)
@@ -204,7 +205,9 @@ def snap_edl_to_shots(edl: EditDecisionList, shots: list["Shot"]) -> EditDecisio
         # NudeNet already supplies temporal margins; snapping can turn a
         # brief mistaken detection into an entire missing shot. Word cuts
         # likewise need to retain word precision.
-        precise = bool(set(d.source.split("+")) & {"visual", "visual-shot", "visual-temporal", "whisper-word"})
+        precise = bool(set(d.source.split("+")) & {
+            "visual", "visual-shot", "visual-temporal", "whisper-word", "sexual-activity",
+        })
         if d.action == "cut" and d.accepted and not precise:
             ns, ne = snap_range_to_shots(d.start, d.end, shots)
             out.append(

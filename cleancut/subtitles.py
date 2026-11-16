@@ -116,14 +116,15 @@ def scan_subtitles(subs: list[Subtitle], config: Config) -> EditDecisionList:
     Weak (ambiguous) patterns only survive if a strong hit lies within
     CONTEXT_WINDOW_SECONDS on either side.
     """
-    patterns = _compile_patterns(config.wordlists)
+    patterns = _compile_patterns(config.dialogue_wordlists())
     edl = EditDecisionList()
+    if not patterns:
+        return edl
+    replacements, wordlists = _subtitle_rules(config)
 
     for sub in subs:
         matches: list[tuple[str, str, str]] = []  # (category, matched_text, strength)
         for category, pats in patterns.items():
-            if category not in config.enabled_categories:
-                continue
             for pat, strength in pats:
                 for m in pat.finditer(sub.text):
                     matches.append((category, m.group(0), strength))
@@ -137,10 +138,7 @@ def scan_subtitles(subs: list[Subtitle], config: Config) -> EditDecisionList:
         )[0]
         category, _, line_strength = best
         action = config.actions.get(category, "mute")
-        if action == "keep":
-            continue
-
-        text_after = soften_text(sub.text, config.replacements, config.wordlists)
+        text_after = soften_text(sub.text, replacements, wordlists)
         reason_prefix = "weak: " if line_strength == "weak" else "matched: "
         edl.add(
             EditDecision(
@@ -230,10 +228,36 @@ def _match_case(original: str, replacement: str) -> str:
     return replacement
 
 
+_REPLACEMENT_ONLY_CATEGORIES = {
+    "bullshit": "profanity", "ass": "profanity", "goddammit": "profanity", "dammit": "profanity",
+    "kill you": "violence", "kill him": "violence", "kill her": "violence", "kill them": "violence",
+    "kill myself": "violence", "murder": "violence",
+}
+
+
+def _subtitle_rules(config: Config) -> tuple[dict[str, str], dict[str, list]]:
+    active = config.dialogue_wordlists()
+    if not active or not config.replacements:
+        return {}, active
+
+    # Replacements predate category settings. Wordlists supply their categories,
+    # including inflected forms. A few stock replacements have no detector rule.
+    patterns = _compile_patterns(config.wordlists)
+    replacements = {}
+    for word, replacement in config.replacements.items():
+        categories = {cat for cat, entries in patterns.items() if any(p.fullmatch(word) for p, _ in entries)}
+        if word.lower() in _REPLACEMENT_ONLY_CATEGORIES:
+            categories.add(_REPLACEMENT_ONLY_CATEGORIES[word.lower()])
+        if not categories or any(config.edits_category(cat) for cat in categories):
+            replacements[word] = replacement
+    return replacements, active
+
+
 def softened_subtitles(subs: list[Subtitle], config: Config) -> list[Subtitle]:
-    """Return a copy of subs with every line softened by the replacements map."""
+    """Soften captions for categories selected for editing."""
+    replacements, wordlists = _subtitle_rules(config)
     return [
-        Subtitle(index=s.index, start=s.start, end=s.end, text=soften_text(s.text, config.replacements, config.wordlists))
+        Subtitle(index=s.index, start=s.start, end=s.end, text=soften_text(s.text, replacements, wordlists))
         for s in subs
     ]
 
@@ -248,8 +272,11 @@ def scan_words(words, config: Config) -> EditDecisionList:
     `words` is a list of cleancut.transcribe.Word; imported lazily to avoid
     a hard dep on the whisper extras.
     """
-    patterns = _compile_patterns(config.wordlists)
+    patterns = _compile_patterns(config.dialogue_wordlists())
     edl = EditDecisionList()
+    if not patterns:
+        return edl
+    replacements, wordlists = _subtitle_rules(config)
 
     n = len(words)
     trim_chars = " \t\r\n.,!?;:\"'“”‘’()[]{}<>—–-…"
@@ -279,8 +306,6 @@ def scan_words(words, config: Config) -> EditDecisionList:
             if not text:
                 continue
             for category, pats in patterns.items():
-                if category not in config.enabled_categories:
-                    continue
                 for pat, strength in pats:
                     for match in pat.finditer(text):
                         matched_offsets = [
@@ -311,8 +336,7 @@ def scan_words(words, config: Config) -> EditDecisionList:
         # spoken replacement or its review label.
         text = " ".join(w.text.strip(trim_chars) for w in words[i:i + final_offset + 1])
         action = config.actions.get(category, "mute")
-        if action == "keep":
-            continue
+        text_after = soften_text(text, replacements, wordlists)
         reason_prefix = "weak: " if strength == "weak" else "matched: "
         edl.add(
             EditDecision(
@@ -322,13 +346,13 @@ def scan_words(words, config: Config) -> EditDecisionList:
                 category=category,
                 reason=reason_prefix + matched.lower(),
                 text_before=text,
-                text_after=soften_text(text, config.replacements, config.wordlists),
+                text_after=text_after,
                 source="whisper-word",
                 word_edits=[{
                     "start": words[i].start,
                     "end": words[i + final_offset].end,
                     "text_before": text,
-                    "text_after": soften_text(text, config.replacements, config.wordlists),
+                    "text_after": text_after,
                     "category": category,
                     "next_word_start": (words[i + final_offset + 1].start
                                         if i + final_offset + 1 < n else None),

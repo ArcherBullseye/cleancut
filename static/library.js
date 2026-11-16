@@ -20,6 +20,7 @@ async function loadSettings() {
   document.getElementById("use-visual").checked = !!currentSettings.use_visual;
   document.getElementById("nudity-all-frames").checked = !!currentSettings.nudity_all_frames;
   document.getElementById("nudity-second-opinion").checked = !!currentSettings.nudity_second_opinion;
+  document.getElementById("blur-nudity-cut-sex").checked = !!currentSettings.blur_nudity_cut_sex;
   document.getElementById("allow-solo-visual").checked = !!currentSettings.allow_solo_visual;
   document.getElementById("word-end-padding-ms").value = currentSettings.word_end_padding_ms;
 }
@@ -164,6 +165,7 @@ async function startScan() {
       use_visual: document.getElementById("use-visual").checked,
       nudity_all_frames: document.getElementById("nudity-all-frames").checked,
       nudity_second_opinion: document.getElementById("nudity-second-opinion").checked,
+      blur_nudity_cut_sex: document.getElementById("blur-nudity-cut-sex").checked,
       use_local_ai: document.getElementById("use-local-ai").checked,
       allow_solo_visual: document.getElementById("allow-solo-visual").checked,
       auto_render: document.getElementById("auto-render").checked,

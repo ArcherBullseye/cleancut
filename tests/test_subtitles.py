@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from cleancut.config import Config
-from cleancut.subtitles import read_srt, scan_subtitles, scan_words, soften_text
+from cleancut.subtitles import (
+    Subtitle,
+    read_srt,
+    scan_subtitles,
+    scan_words,
+    soften_text,
+    softened_subtitles,
+)
 from cleancut.transcribe import Word
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.srt"
@@ -28,6 +35,22 @@ def test_scan_subtitles_matches_profanity_and_drugs():
     # The benign line should not be flagged.
     flagged_texts = {d.text_before for d in edl.decisions}
     assert "Just a normal line of dialogue." not in flagged_texts
+
+
+def test_keep_excludes_language_from_matching_and_caption_softening():
+    config = Config.load_defaults()
+    config.actions.update(profanity="keep", drugs="keep")
+    # A kept category must not suppress a lower-severity editable match at the same time.
+    config.enabled_categories.add("violence")
+    config.actions["violence"] = "mute"
+    subs = [Subtitle(1, 0, 1, "Fuck, cocaine, bullshit, and torture.")]
+    decision, = scan_subtitles(subs, config).decisions
+    assert decision.category == "violence"
+    assert "cocaine" not in decision.reason
+    words = [Word(0, .2, "Fuck"), Word(.3, .5, "cocaine"), Word(.6, .8, "naked")]
+    assert [d.category for d in scan_words(words, config)] == ["sex"]
+    captions = [Subtitle(1, 0, 1, "Fuck, cocaine, bullshit, and naked.")]
+    assert softened_subtitles(captions, config)[0].text == "Fuck, cocaine, bullshit, and undressed."
 
 
 def test_scan_words_mutes_only_the_matched_word_timestamp():

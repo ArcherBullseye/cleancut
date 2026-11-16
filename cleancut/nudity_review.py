@@ -72,16 +72,18 @@ def _frame_image(cap, timestamp: float):
     return image
 
 
-def _classify(client, model: str, images: list[bytes], context: str) -> str:
+def _classify(
+    client, model: str, images: list[bytes], context: str, *, prompt: str = PROMPT, schema: dict = SCHEMA,
+) -> str:
     for attempt in (1, 2):
         try:
             text = chat_for_json(
-                client, model=model, format=SCHEMA, options={"temperature": 0},
-                messages=[{"role": "system", "content": PROMPT},
+                client, model=model, format=schema, options={"temperature": 0},
+                messages=[{"role": "system", "content": prompt},
                           {"role": "user", "content": context, "images": images}],
             )
             verdict = json.loads(strip_to_json(text))["verdict"]
-            if verdict not in VERDICTS:
+            if verdict not in schema["properties"]["verdict"]["enum"]:
                 raise ValueError("Unknown verdict")
             return verdict
         except Exception as exc:

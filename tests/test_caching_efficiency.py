@@ -158,6 +158,22 @@ class _ExplodingClientFactory:
 
 
 class TestLLMCache:
+    def test_cached_drug_edit_does_not_survive_keep(self, tmp_path):
+        from cleancut.classify_dialogue import LLMParams, classify_dialogue
+
+        video = tmp_path / "movie.mp4"
+        video.touch()
+        subs = [Subtitle(1, 0, 2, "line one"), Subtitle(2, 3, 5, "line two")]
+        reply = {"category": "drugs", "should_cut": True, "confidence": 0.9}
+        with patch("cleancut.classify_dialogue.make_ollama_client"), \
+             patch("cleancut.classify_dialogue._classify_one", return_value=reply):
+            original = classify_dialogue(subs, LLMParams(), video=video)
+            kept = classify_dialogue(
+                subs, LLMParams(categories=("sex",), actions={"drugs": "keep"}), video=video,
+            )
+        assert [d.category for d in original] == ["drugs"]
+        assert kept.decisions == []
+
     def test_second_run_skips_ollama_entirely(self, tmp_path):
         from cleancut.classify_dialogue import LLMParams, classify_dialogue
 

@@ -12,7 +12,7 @@ Runs entirely on-device. Native macOS uses the configured local Qwen model.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from tqdm import tqdm
@@ -91,6 +91,7 @@ class LLMParams:
     # Per-category actions from the user's config. None means "cut",
     # preserving the old behaviour for direct callers.
     actions: dict[str, str] | None = None
+    categories: tuple[str, ...] = ("drugs", "sex", "violence")
 
 
 
@@ -142,7 +143,10 @@ def _classify_one(client, params: LLMParams, chunk: DialogueChunk) -> dict | Non
             client,
             model=params.model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": (
+                    f"{SYSTEM_PROMPT}\n\nCheck only these categories: {', '.join(params.categories)}. "
+                    "Ignore other categories. Use multi only for a combination of the requested categories."
+                )},
                 {"role": "user", "content": prompt},
             ],
             format="json",
@@ -164,6 +168,10 @@ def classify_dialogue(
     Results cache per (video, model, params, chunk fingerprint) when `video`
     is given — at seconds per chunk, this is one of the slowest stages.
     """
+    categories = tuple(cat for cat in params.categories if resolve_action(cat, params.actions) != "keep")
+    if not categories:
+        return EditDecisionList()
+    params = replace(params, categories=categories)
     try:
         import ollama  # noqa: F401
     except ImportError as e:
@@ -183,6 +191,8 @@ def classify_dialogue(
             model=params.model,
             min_confidence=params.min_confidence,
             pad_seconds=params.pad_seconds,
+            categories=params.categories,
+            actions=params.actions,
             chunks=[(round(c.start, 2), round(c.end, 2), len(c.lines),
                      sum(len(s.text) for s in c.lines)) for c in chunks],
         )
@@ -218,7 +228,9 @@ def classify_dialogue(
         # Profanity alone should never cut.
         if category == "profanity":
             continue
-        if category not in {"drugs", "sex", "violence", "multi"}:
+        if category == "multi" and len(params.categories) == 1:
+            continue
+        if category != "multi" and category not in params.categories:
             continue
         action = resolve_action(category, params.actions)
         if action == "keep":

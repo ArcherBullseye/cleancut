@@ -190,6 +190,7 @@ def scan_audio_events(
         clip_seconds=params.clip_seconds,
         min_shot_duration=params.min_shot_duration,
         categories=sorted(cats_for_hash),
+        actions=params.actions,
         shots=shot_fp,
         audio_track=audio_track_index,
     )

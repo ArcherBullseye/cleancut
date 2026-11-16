@@ -28,7 +28,27 @@ def test_build_edl_requests_word_precision():
     ) as get_dialogue:
         build_edl(opts, config)
 
-    get_dialogue.assert_called_once_with(opts, config, require_word_precision=True)
+    get_dialogue.assert_called_once_with(opts, config, require_word_precision=True, transcribe_missing=True)
+
+
+def test_visual_only_scan_skips_whisper_for_kept_dialogue(tmp_path):
+    from cleancut.config import Config
+    from cleancut.pipeline import PipelineOptions, build_edl
+
+    config = Config.load_defaults()
+    config.actions.update(profanity="keep", drugs="keep", sex="keep")
+    config.llm_enabled = True
+    config.vlm_enabled = True
+    config.analysis_proxy_enabled = False
+    opts = PipelineOptions(video=tmp_path / "movie.mp4", burn_subs=False, use_scenes=False)
+    with patch("cleancut.probe.probe_streams", return_value=[]), \
+         patch("cleancut.probe.pick_audio_track") as pick_audio, \
+         patch("cleancut.visual.scan_video", return_value=EditDecisionList()) as nudity, \
+         patch("cleancut.classify_dialogue.classify_dialogue") as dialogue:
+        build_edl(opts, config)
+    pick_audio.assert_not_called()
+    dialogue.assert_not_called()
+    nudity.assert_called_once()
 
 
 def test_snap_edl_to_shots_empty_shots():

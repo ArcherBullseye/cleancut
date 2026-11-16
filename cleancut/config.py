@@ -13,7 +13,7 @@ from cleancut.constants import (
 )
 
 Category = Literal["profanity", "drugs", "sex", "violence", "nudity"]
-Action = Literal["mute", "replace", "cut", "keep"]
+Action = Literal["mute", "replace", "cut", "keep", "blur"]
 
 
 PRESETS = {
@@ -98,6 +98,7 @@ class Config:
     nudity_model: str = "accurate"
     nudity_all_frames: bool = False
     nudity_second_opinion: bool = False
+    blur_nudity_cut_sex: bool = False
     nudity_strong_threshold: float = 0.90
     # Repetition of a weak prediction is not independent confirmation.
     nudity_confirmation_threshold: float = 0.75
@@ -186,6 +187,15 @@ class Config:
             raise ValueError(f"Unknown preset {name!r}. Options: {list(PRESETS)}")
         for k, v in PRESETS[name].items():
             setattr(self, k, v)
+
+    def edits_category(self, category: str) -> bool:
+        return category in self.enabled_categories and self.actions.get(category) != "keep"
+
+    def dialogue_wordlists(self) -> dict[str, list]:
+        return {
+            category: entries for category, entries in self.wordlists.items()
+            if entries and self.edits_category(category)
+        }
 
     def resolved_encoder(self, video_path: Path | None = None) -> str:
         if self.encoder == "auto":

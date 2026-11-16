@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rich.console import Console
 
+from cleancut.classify_visual import VISUAL_CATEGORIES
 from cleancut.config import Config
 from cleancut.edl import EditDecisionList, snap_edl_to_shots
 from cleancut.editor import (
+    Range,
     adjust_subtitles_for_cuts,
     apply_cuts,
     apply_mutes_and_subs,
     edl_to_ranges,
+    keep_segments,
     normalize_cuts,
     probe_duration,
     shift_ranges_after_cuts,
@@ -98,6 +102,7 @@ def _get_subtitles_and_words(
     config: Config,
     *,
     require_word_precision: bool = False,
+    transcribe_missing: bool = True,
 ) -> tuple[list[Subtitle], list[Word]]:
     """Resolve subtitles in this priority:
 
@@ -150,7 +155,7 @@ def _get_subtitles_and_words(
                 if extracted:
                     subs = read_srt(extracted)
 
-    needs_whisper = not subs or (
+    needs_whisper = (not subs and transcribe_missing) or (
         require_word_precision and config.whisper_word_timestamps and not words
     )
     if not needs_whisper:
@@ -280,15 +285,35 @@ def _detect_scenes_if_enabled(
 
 def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, list[Subtitle]]:
     """Run all detectors and produce a merged EDL."""
-    subs, words = _get_subtitles_and_words(opts, config, require_word_precision=True)
+    nude_config = config
+    if config.blur_nudity_cut_sex:
+        nude_config = replace(config, actions={**config.actions, "nudity": "blur"})
+        config = replace(config, enabled_categories=config.enabled_categories - {"sex", "nudity"})
+    scan_dialogue = bool(config.dialogue_wordlists())
+    llm_categories = tuple(cat for cat in ("drugs", "sex", "violence") if config.edits_category(cat))
+    run_llm = config.llm_enabled and bool(llm_categories)
+    vlm_targets = tuple(
+        key for key, cat in VISUAL_CATEGORIES.items()
+        if config.edits_category(cat) and (key != "intimate" or config.vlm_cut_intimate)
+    )
+    run_vlm = config.vlm_enabled and bool(vlm_targets)
+    needs_transcript = (
+        scan_dialogue or run_llm or opts.burn_subs or opts.soft_subs or opts.save_transcript is not None
+    )
+    subs, words = [], []
+    if needs_transcript or opts.subs is not None or (run_vlm and "silent" in config.vlm_mode.split("+")):
+        subs, words = _get_subtitles_and_words(
+            opts, config, require_word_precision=scan_dialogue,
+            transcribe_missing=needs_transcript,
+        )
 
     edl = EditDecisionList(video_path=str(opts.video), subtitle_path=str(opts.subs or ""))
 
     # Dialogue scan: prefer word-level if Whisper gave us words, else line-level.
-    if words:
+    if scan_dialogue and words:
         console.print(f"[cyan]Scanning {len(words)} words (word-precise)[/cyan]")
         edl.extend(scan_words(words, config).decisions)
-    elif subs:
+    elif scan_dialogue and subs:
         console.print(f"[cyan]Scanning {len(subs)} subtitle lines[/cyan]")
         edl.extend(scan_subtitles(subs, config).decisions)
 
@@ -296,9 +321,9 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
     # preserving 720p proxy avoids decoding every 4K frame through OpenCV while
     # all edit decisions remain aligned to the original timeline.
     analysis_video = opts.video
-    run_nudity = opts.use_visual and "nudity" in config.enabled_categories
+    run_nudity = config.blur_nudity_cut_sex or (opts.use_visual and config.edits_category("nudity"))
     sampled_nudity = run_nudity and not config.nudity_all_frames
-    if config.analysis_proxy_enabled and (opts.use_scenes or sampled_nudity):
+    if config.analysis_proxy_enabled and (opts.use_scenes or sampled_nudity or config.blur_nudity_cut_sex):
         try:
             from cleancut.proxy import analysis_source
 
@@ -313,7 +338,13 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             analysis_video = opts.video
 
     # Shot boundaries are used to snap confirmed edit ranges to natural cuts.
-    shots = _detect_scenes_if_enabled(opts, config, analysis_video)
+    if config.blur_nudity_cut_sex:
+        from cleancut.scenes import detect_shots
+
+        console.print("[cyan]Detecting shot boundaries for sex scenes[/cyan]")
+        shots = detect_shots(opts.video, config.scene_threshold, include_single_shot=True)
+    else:
+        shots = _detect_scenes_if_enabled(opts, config, analysis_video)
 
     if run_nudity:
         from cleancut.visual import scan_video
@@ -331,16 +362,17 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
 
             evidence = []
             try:
-                visual_decisions = scan_video(video, config, evidence=evidence).decisions
-                visual_decisions = review_nudity(opts.video, video, visual_decisions, evidence, config)
+                visual_decisions = scan_video(video, nude_config, evidence=evidence).decisions
+                visual_decisions = review_nudity(opts.video, video, visual_decisions, evidence, nude_config)
             except Exception as exc:
                 raise RuntimeError(f"Nudity second opinion failed: {exc}") from exc
-        elif config.nudity_all_frames:
+        elif config.nudity_all_frames or config.blur_nudity_cut_sex:
             # An explicitly requested exhaustive scan must finish before rendering can proceed.
             try:
-                visual_decisions = scan_video(video, config).decisions
+                visual_decisions = scan_video(video, nude_config).decisions
             except Exception as exc:
-                raise RuntimeError(f"Every-frame nudity scan failed: {exc}") from exc
+                mode = "Every-frame nudity scan" if config.nudity_all_frames else "Nudity blur scan"
+                raise RuntimeError(f"{mode} failed: {exc}") from exc
         else:
             visual_decisions = _run_detector(
                 "Visual scan",
@@ -352,7 +384,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
     edl = edl.merge_overlapping(gap=config.merge_gap_seconds).sorted()
 
     # LLM-based contextual dialogue classification.
-    if config.llm_enabled and subs:
+    if run_llm and subs:
         from cleancut.classify_dialogue import LLMParams, classify_dialogue
         console.print(f"[cyan]LLM dialogue scan[/cyan] model={config.llm_model}")
         llm_params = LLMParams(
@@ -360,6 +392,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             ollama_host=config.llm_host,
             min_confidence=config.llm_min_confidence,
             actions=config.actions,
+            categories=llm_categories,
         )
         llm_edl_decisions = _run_detector(
             "LLM scan", lambda: classify_dialogue(subs, llm_params, video=opts.video).decisions
@@ -369,7 +402,11 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             edl.extend(llm_edl_decisions)
 
     # Audio event detection (AST) — catches moans/screams/gunshots without dialogue or visible content.
-    if config.audio_events_enabled and shots:
+    audio_categories = tuple(
+        cat for cat in ("sex", "violence")
+        if config.edits_category(cat) and (cat != "violence" or not config.audio_events_skip_violence)
+    )
+    if config.audio_events_enabled and shots and audio_categories:
         from cleancut import audio_events
         console.print(f"[cyan]Audio event scan[/cyan] model={config.audio_events_model}")
         ae_params = audio_events.AudioEventParams(
@@ -377,6 +414,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             threshold=config.audio_events_threshold,
             clip_seconds=config.audio_events_clip_seconds,
             skip_violence=config.audio_events_skip_violence,
+            enabled_categories=audio_categories,
             actions=config.actions,
         )
         # Analyze the same track Whisper transcribes — ffmpeg's default stream
@@ -421,10 +459,8 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             edl.extend(clusters.decisions)
 
     # VLM visual scene classification — closes the gap on silent scenes.
-    if config.vlm_enabled and shots:
+    if run_vlm and shots:
         from cleancut.classify_visual import VLMParams, scan_with_vlm as vlm_scan
-        cut_on = ("intimate", "explicit", "drug_use", "violence") if config.vlm_cut_intimate \
-            else ("explicit", "drug_use", "violence")
         console.print(
             f"[cyan]VLM scene scan[/cyan] model={config.vlm_model} "
             f"mode={config.vlm_mode}"
@@ -435,7 +471,7 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
             stride=config.vlm_stride,
             min_confidence=config.vlm_min_confidence,
             gaps_radius_seconds=config.vlm_gaps_radius,
-            cut_on=cut_on,
+            cut_on=vlm_targets,
             ollama_host=config.llm_host,
             actions=config.actions,
         )
@@ -466,6 +502,13 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
                 f"(no dialogue/audio within ±{config.corroboration_radius_seconds}s)"
             )
 
+    if config.blur_nudity_cut_sex:
+        from cleancut.sexual_activity import scan_sexual_activity
+
+        console.print(f"[cyan]Checking for sexual activity[/cyan] ({config.vlm_model})")
+        edl.extend(scan_sexual_activity(opts.video, shots, config))
+        edl = edl.sorted()
+
     return edl, subs
 
 
@@ -481,8 +524,8 @@ def render(
 
     # Work dir alongside the OUTPUT, not the source — source dir may have
     # weird characters that break ffmpeg filters, or may be on a read-only volume.
-    work = opts.output.parent / ".cleancut_work"
-    work.mkdir(parents=True, exist_ok=True)
+    opts.output.parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=".cleancut_work-", dir=opts.output.parent))
 
     try:
         cuts = edl_to_ranges(edl, "cut")
@@ -495,6 +538,21 @@ def render(
                   if encoder in {"videotoolbox", "hevc_videotoolbox"}
                   else f"CRF={config.quality}")
         console.print(f"[cyan]Encoder[/cyan]: {encoder} (CleanCut quality={config.quality}; {target})")
+
+        blur = None
+        blur_ranges = edl_to_ranges(edl, "blur")
+        if blur_ranges and cuts:
+            kept = keep_segments(probe_duration(opts.video), cuts)
+            blur_ranges = [
+                Range(max(span.start, part.start), min(span.end, part.end))
+                for span in blur_ranges for part in kept
+                if span.start < part.end and part.start < span.end
+            ]
+        if blur_ranges:
+            from cleancut.blur import prepare_blur
+
+            console.print(f"[cyan]Locating blur regions[/cyan] in {len(blur_ranges)} range(s)")
+            blur = prepare_blur(opts.video, blur_ranges, config, work / "blur.commands")
 
         speech_clips = []
         background_clips = []
@@ -533,6 +591,7 @@ def render(
                 opts.video, cuts, cut_path, encoder=encoder, quality=config.quality,
                 validation="quick",
                 **({"audio_index": audio_index} if audio_index is not None else {}),
+                **({"blur": blur} if blur else {}),
             )
             if audio_index is not None:
                 audio_index = 1  # apply_cuts writes one video followed by one audio track.
@@ -542,11 +601,10 @@ def render(
             cut_path = opts.video
 
         # Step 2: soften surviving subs and write a working .srt for burn-in.
-        softened = softened_subtitles(subs, config) if subs else []
         srt_for_burn: Path | None = None
-        if softened and (opts.burn_subs or opts.soft_subs):
+        if subs and (opts.burn_subs or opts.soft_subs):
             srt_for_burn = work / f"{opts.video.stem}.softened.srt"
-            write_srt(softened, srt_for_burn)
+            write_srt(softened_subtitles(subs, config), srt_for_burn)
 
         # Step 3: mute audio ranges and burn the softened subs.
         console.print(
@@ -562,6 +620,7 @@ def render(
             encoder=encoder,
             quality=config.quality,
             validation=config.render_validation,
+            **({"blur": blur} if blur and not cuts else {}),
             **({"speech_clips": [*background_clips, *speech_clips], "audio_index": audio_index}
                if replace_audio or config.preserve_background else {}),
         )

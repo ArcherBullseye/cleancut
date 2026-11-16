@@ -26,7 +26,9 @@ class Shot:
         return self.start <= t < self.end
 
 
-def detect_shots(video_path: Path, threshold: float = 27.0, use_cache: bool = True) -> list[Shot]:
+def detect_shots(
+    video_path: Path, threshold: float = 27.0, use_cache: bool = True, *, include_single_shot: bool = False,
+) -> list[Shot]:
     """Return all detected shot boundaries.
 
     `threshold` is the PySceneDetect ContentDetector threshold. Lower = more
@@ -38,7 +40,8 @@ def detect_shots(video_path: Path, threshold: float = 27.0, use_cache: bool = Tr
     """
     from cleancut import cache as _cache
 
-    h = _cache.config_hash(threshold=threshold, kind="ContentDetector")
+    h = _cache.config_hash(threshold=threshold, kind="ContentDetector",
+                           **({"include_single_shot": True} if include_single_shot else {}))
     if use_cache:
         hit = _cache.load(video_path, "shots", h)
         if hit:
@@ -51,8 +54,12 @@ def detect_shots(video_path: Path, threshold: float = 27.0, use_cache: bool = Tr
             "Scene detection requires extras. Install with: pip install -e '.[scenes]'"
         ) from e
 
-    scene_list = detect(str(video_path), ContentDetector(threshold=threshold))
-    shots = [Shot(start=float(s.get_seconds()), end=float(e.get_seconds())) for s, e in scene_list]
+    scene_list = detect(str(video_path), ContentDetector(threshold=threshold),
+                        start_in_scene=include_single_shot)
+    if include_single_shot and scene_list:
+        shots = _source_timed_shots(video_path, scene_list)
+    else:
+        shots = [Shot(start=float(s.get_seconds()), end=float(e.get_seconds())) for s, e in scene_list]
     # Empty results cache too — otherwise a shotless video re-runs the full
     # pass on every scan.
     if use_cache:
@@ -61,6 +68,30 @@ def detect_shots(video_path: Path, threshold: float = 27.0, use_cache: bool = Tr
             "count": len(shots),
         })
     return shots
+
+
+def _source_timed_shots(video: Path, scenes) -> list[Shot]:
+    import cv2
+
+    from cleancut.probe import probe_video_timing
+    from cleancut.visual import _open_capture, iter_frame_positions
+
+    offset, duration, video_end = probe_video_timing(video)
+    bounds = {time.get_frames() for scene in scenes for time in scene}
+    times = {}
+    cap = _open_capture(cv2, video, source_timestamps=True)
+    try:
+        for index, timestamp in iter_frame_positions(cv2, cap, offset):
+            if index in bounds:
+                times[index] = max(0.0, timestamp)
+        if index + 1 in bounds:
+            times[index + 1] = min(duration, video_end) if video_end is not None else duration
+    finally:
+        cap.release()
+    try:
+        return [Shot(times[s.get_frames()], times[e.get_frames()]) for s, e in scenes]
+    except KeyError as exc:
+        raise RuntimeError("Could not align shot boundaries with the source frames.") from exc
 
 
 def shot_containing(t: float, shots: list[Shot]) -> Shot | None:

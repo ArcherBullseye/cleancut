@@ -16,7 +16,7 @@ import json
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from tqdm import tqdm
@@ -38,6 +38,10 @@ from cleancut.llm_utils import (
 )
 from cleancut.scenes import Shot
 from cleancut.subtitles import Subtitle
+
+VISUAL_CATEGORIES = {
+    "explicit": "nudity", "intimate": "sex", "drug_use": "drugs", "violence": "violence",
+}
 
 SYSTEM_PROMPT = """You are a content classifier for a movie editing tool that removes drug, sex, and violent scenes for family viewing. You will be shown a single frame from a movie.
 
@@ -171,7 +175,8 @@ def _classify_frame(client, params: VLMParams, frame_path: Path) -> dict | None:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": "Classify this movie frame. Return JSON only.",
+                    "content": f"Check only {', '.join(params.cut_on)} in this frame. "
+                               "Set all other category flags to false. Return JSON only.",
                     "images": [str(frame_path)],
                 },
             ],
@@ -189,15 +194,9 @@ def _flagged_categories(result: dict, params: VLMParams) -> list[str]:
         return cats
     if coerce_confidence(result.get("confidence", 0.0)) < params.min_confidence:
         return cats
-    mapping = {
-        "explicit": "nudity",
-        "intimate": "sex",
-        "drug_use": "drugs",
-        "violence": "violence",
-    }
     for key in params.cut_on:
         if result.get(key) is True:
-            cats.append(mapping.get(key, key))
+            cats.append(VISUAL_CATEGORIES.get(key, key))
     return cats
 
 
@@ -210,6 +209,12 @@ def scan_with_vlm(
     use_cache: bool = True,
 ) -> EditDecisionList:
     """Run VLM over a selected subset of shots; emit cuts for flagged shots."""
+    cut_on = tuple(
+        key for key in params.cut_on if resolve_action(VISUAL_CATEGORIES.get(key, key), params.actions) != "keep"
+    )
+    if not cut_on:
+        return EditDecisionList()
+    params = replace(params, cut_on=cut_on)
     try:
         import ollama  # noqa: F401
     except ImportError as e:
@@ -232,6 +237,7 @@ def scan_with_vlm(
             model=params.model,
             min_confidence=params.min_confidence,
             cut_on=sorted(params.cut_on),
+            actions=params.actions,
             targets=[(round(s.start, 2), round(s.end, 2)) for s in targets],
         )
         hit = _cache.load(video, "vlm", cache_hash)

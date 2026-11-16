@@ -69,6 +69,16 @@ configured vision model and sample the original video once per second for
 additional nudity. Review shows the model's verdict on each NudeNet candidate.
 New Ollama findings are unselected suggestions, and NudeNet keeps its existing
 automatic cut rules. This adds thousands of vision requests for a feature film.
+
+**Library → Advanced → Blur nudity and cut sex scenes** (`--blur-nudity-cut-sex`)
+uses NudeNet to locate exposed anatomy and the configured Ollama vision model to
+check sequences of frames for sexual activity. It overrides the Nudity and Sex
+actions for that scan. Detected sexual activity cuts the containing shots plus
+adjacent shots identified as continuations. Ambiguous scenes are left unselected
+for Review. Nudity edits preserve timing and audio. If a frame in an accepted blur
+range has no usable detection box, the renderer blurs the full frame. In Review,
+use **Preview blur** on a blur edit or change the action to **Cut** or **Keep**.
+
 Word censorship adds a configurable ending buffer (200 ms by default), even
 when the next word's estimated onset overlaps. This may trim closely following
 speech. See [beta.12 audio fixes](MACOS.md#remaining-word-fragments-beta12) and

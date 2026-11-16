@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from cleancut.blur import BlurFilter
     from cleancut.speech import SpeechClip
 
 
@@ -149,13 +150,19 @@ def _source_video_format(input_path: Path) -> tuple[str, str]:
         return "", ""
 
 
-def _source_video_stream(input_path: Path):
+def _source_streams(input_path: Path):
     try:
-        from cleancut.probe import probe_streams, video_stream
+        from cleancut.probe import probe_streams
 
-        return video_stream(probe_streams(input_path))
+        return probe_streams(input_path)
     except Exception:
-        return None
+        return []
+
+
+def _source_video_stream(input_path: Path):
+    from cleancut.probe import video_stream
+
+    return video_stream(_source_streams(input_path))
 
 
 def _partial_output_path(output_path: Path) -> Path:
@@ -285,13 +292,17 @@ def apply_cuts(
     quality: int = 20,
     validation: str = "none",
     audio_index: int | None = None,
+    blur: BlurFilter | None = None,
 ) -> None:
     """Re-encode `input_path` with `cuts` removed, writing to `output_path`."""
+    from cleancut.probe import audio_streams, video_stream
+
     _require_ffmpeg()
     output_path = output_path.resolve()
     partial = _partial_output_path(output_path)
     partial.unlink(missing_ok=True)
-    source_stream = _source_video_stream(input_path)
+    streams = _source_streams(input_path)
+    source_stream = video_stream(streams)
     source_dimensions = (
         (source_stream.width, source_stream.height)
         if source_stream and source_stream.width and source_stream.height
@@ -333,32 +344,39 @@ def apply_cuts(
     removed_time = "+".join(
         f"gte(PTS*TB,{c.end:.9f})*{c.duration:.9f}/TB" for c in cuts
     ) or "0"
-    parts: list[str] = [
-        f"[0:v:0]trim=end={duration:.9f},settb=AVTB,"
+    video_input = "[blurred_source]" if blur else "[0:v:0]"
+    parts = [blur.graph(video_input, encoder)] if blur else []
+    # Framesync may shorten the video by one frame during CFR conversion.
+    # Clone only a kept frame and cap its timestamp at the edited duration.
+    expected = sum(r.duration for r in segments)
+    tail = f",tpad=stop=1:stop_mode=clone,trim=end={expected:.9f}" if blur else ""
+    parts.append(
+        f"{video_input}trim=end={duration:.9f},settb=AVTB,"
         f"select='not({removed_frames})',setpts='PTS-({removed_time})',"
-        f"fps=fps={_playback_rate_args(source_stream)[1]}:round=near[outv]"
-    ]
-    concat_inputs: list[str] = []
-    for i, seg in enumerate(segments):
-        parts.append(
-            f"[0:{audio_index if audio_index is not None else 'a'}]"
-            "asettb=1/sr,asetpts=N/SR/TB,"
-            f"atrim=start={seg.start:.9f}:end={seg.end:.9f},"
-            f"asetpts=PTS-STARTPTS[a{i}]"
-        )
-        concat_inputs.append(f"[a{i}]")
-    filter_complex = ";".join(parts) + ";" + "".join(concat_inputs) + (
-        f"concat=n={len(segments)}:v=0:a=1,asetpts=N/SR/TB,{KNOWN_LAYOUTS}[outa_fmt]"
+        f"fps=fps={_playback_rate_args(source_stream)[1]}:round=near{tail}[outv]"
     )
+    audio_map = []
+    if audio_index is not None or not streams or audio_streams(streams):
+        concat_inputs: list[str] = []
+        for i, seg in enumerate(segments):
+            parts.append(
+                f"[0:{audio_index if audio_index is not None else 'a'}]"
+                "asettb=1/sr,asetpts=N/SR/TB,"
+                f"atrim=start={seg.start:.9f}:end={seg.end:.9f},"
+                f"asetpts=PTS-STARTPTS[a{i}]"
+            )
+            concat_inputs.append(f"[a{i}]")
+        parts.append("".join(concat_inputs) +
+                     f"concat=n={len(segments)}:v=0:a=1,asetpts=N/SR/TB,{KNOWN_LAYOUTS}[outa_fmt]")
+        audio_map = ["-map", "[outa_fmt]", *_audio_encoder_args(input_path)]
 
     encoder_args = _video_encoder_args(encoder, quality, source_stream)
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(input_path),
-        "-filter_complex", filter_complex,
-        "-map", "[outv]", "-map", "[outa_fmt]",
+        "-i", str(input_path.resolve()),
+        "-filter_complex", ";".join(parts),
+        "-map", "[outv]", *audio_map,
         *encoder_args,
-        *_audio_encoder_args(input_path),
         *_muxer_args(output_path),
         str(partial),
     ]
@@ -370,12 +388,12 @@ def apply_cuts(
             source=source_stream,
             quality=quality,
             partial=partial,
+            **({"cwd": str(blur.commands.parent.resolve())} if blur else {}),
         )
-        expected = sum(r.duration for r in segments)
         _finish_atomic_output(
             partial, output_path,
             expected_duration=expected,
-            expected_dimensions=source_dimensions,
+            expected_dimensions=blur.dimensions if blur else source_dimensions,
             validation=validation,
         )
     finally:
@@ -453,6 +471,7 @@ def apply_mutes_and_subs(
     validation: str = "none",
     speech_clips: list[SpeechClip] | None = None,
     audio_index: int | None = None,
+    blur: BlurFilter | None = None,
 ) -> None:
     """Apply mute ranges via volume filter; add subtitles either as burn-in (libass)
     or as a soft subtitle track in the container (always works).
@@ -479,7 +498,7 @@ def apply_mutes_and_subs(
     can_burn = burn_subs and srt_path and srt_path.exists() and _ffmpeg_has_libass()
     source_codec, source_pix_fmt = _source_video_format(input_path)
     copy_video = (
-        not can_burn
+        not can_burn and not blur
         and (
             output_path.suffix.lower() not in _MP4_SUFFIXES
             or _can_stream_copy_to_apple_mp4(source_codec, source_pix_fmt)
@@ -519,6 +538,14 @@ def apply_mutes_and_subs(
         enable = "+".join(f"between(t,{r.start:.3f},{r.end:.3f})" for r in mutes)
         af_parts.append(f"volume=enable='{enable}':volume=0")
     af_parts.append(KNOWN_LAYOUTS)
+    graph = []
+    video_map = "0:v:0"
+    if blur:
+        if can_burn:
+            graph.extend([blur.graph("[before_subs]", encoder), "[before_subs]subtitles=subs.srt[outv]"])
+        else:
+            graph.append(blur.graph("[outv]", encoder))
+        video_map = "[outv]"
     if speech_clips:
         # Mix AFTER censoring: the original word remains inaudible even if a
         # generated clip is quieter. Original film duration controls the mix.
@@ -534,31 +561,38 @@ def apply_mutes_and_subs(
             labels.append(f"[{label}]")
         parts.append(''.join(labels) + f"amix=inputs={len(labels)}:duration=first:"
                      "dropout_transition=0:normalize=0[speechmix]")
-        cmd += ["-filter_complex", ";".join(parts), "-map", "0:v:0", "-map", "[speechmix]"]
+        graph.extend(parts)
+        cmd += ["-map", video_map, "-map", "[speechmix]"]
         if has_soft_subs:
             cmd += ["-map", "1:0"]
     else:
         cmd += ["-af", ",".join(af_parts)]
-        if audio_index is not None:
-            cmd += ["-map", "0:v:0", "-map", f"0:{audio_index}"]
+        if audio_index is not None or blur:
+            audio_map = f"0:{audio_index}" if audio_index is not None else "0:a:0?"
+            cmd += ["-map", video_map, "-map", audio_map]
             if has_soft_subs:
                 cmd += ["-map", "1:0"]
 
     safe_dir: Path | None = None
-    if can_burn:
+    if can_burn or blur:
         safe_dir = Path(tempfile.mkdtemp(prefix="cleancut-render_"))
     try:
+        if blur:
+            shutil.copyfile(blur.commands, safe_dir / "blur.commands")
+        if graph:
+            cmd += ["-filter_complex", ";".join(graph)]
         if can_burn:
             safe_srt = safe_dir / "subs.srt"
             shutil.copy(str(srt_path), str(safe_srt))
-            cmd += ["-vf", "subtitles=subs.srt"]
+            if not blur:
+                cmd += ["-vf", "subtitles=subs.srt"]
             encoder_args = _video_encoder_args(encoder, quality, source_stream)
             cmd += encoder_args
         elif has_soft_subs:
             # Stream-copy video, encode subs into the container. mov_text is
             # MP4-family only; Matroska (and most others) take srt.
             sub_codec = "mov_text" if output_path.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
-            if not speech_clips and audio_index is None:
+            if not speech_clips and audio_index is None and not blur:
                 cmd += ["-map", "0:v", "-map", "0:a", "-map", "1:0"]
             if copy_video:
                 cmd += ["-c:v", "copy"]
@@ -581,7 +615,7 @@ def apply_mutes_and_subs(
             *_muxer_args(output_path, copied_video_codec=copied_codec),
             str(partial),
         ]
-        cwd = str(safe_dir) if can_burn else None
+        cwd = str(safe_dir) if safe_dir else None
         try:
             _run_with_encoder_fallback(
                 cmd,
@@ -598,12 +632,12 @@ def apply_mutes_and_subs(
             print("[cleancut] Audio overlay mix failed; retrying with word-only mutes.", flush=True)
             apply_mutes_and_subs(input_path, mutes, srt_path, output_path,
                                  burn_subs=burn_subs, encoder=encoder, quality=quality,
-                                 validation=validation, audio_index=audio_index)
+                                 validation=validation, audio_index=audio_index, blur=blur)
             return
         _finish_atomic_output(
             partial, output_path,
             expected_duration=(probe_duration(input_path) if validation != "none" else None),
-            expected_dimensions=source_dimensions,
+            expected_dimensions=blur.dimensions if blur else source_dimensions,
             validation=validation,
         )
     finally:

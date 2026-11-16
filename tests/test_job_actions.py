@@ -38,6 +38,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         "auto_render": True, "use_visual": False, "use_local_ai": False,
         "allow_solo_visual": True, "word_end_padding_ms": 300, "nudity_all_frames": True,
         "nudity_second_opinion": True,
+        "blur_nudity_cut_sex": True,
     }
     with patch("webapp.app.library.resolve_safe", side_effect=lambda path: first if path == str(first) else second):
         response = local_jobs.post("/api/scan", json=choices)
@@ -51,6 +52,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert remembered["word_end_padding_ms"] == 300
         assert remembered["nudity_all_frames"] is True
         assert remembered["nudity_second_opinion"] is True
+        assert remembered["blur_nudity_cut_sex"] is True
         assert not remembered["use_visual"] and not remembered["local_ai_enabled"]
         # A fresh read from disk / restarted job database retains defaults.
         jobs.init_db()
@@ -66,6 +68,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
         assert command[command.index("--word-end-padding-ms") + 1] == "300"
         assert "--nudity-all-frames" in command
         assert "--nudity-second-opinion" in command
+        assert "--blur-nudity-cut-sex" in command
     settings.save({"actions": {"profanity": "mute"}})
     assert json.loads(jobs.get_job(job_id)["options"])["actions"]["profanity"] == "replace"
 
@@ -76,6 +79,7 @@ def test_scan_remembers_choices_and_keeps_existing_job_snapshot(local_jobs, tmp_
     {"word_end_padding_ms": 501}, {"word_end_padding_ms": -1}, {"word_end_padding_ms": "200"},
     {"nudity_all_frames": "on"},
     {"nudity_second_opinion": "on"},
+    {"blur_nudity_cut_sex": "on"},
 ])
 def test_invalid_scan_choices_do_not_persist(local_jobs, tmp_path, body):
     video = tmp_path / "movie.mp4"
@@ -96,6 +100,17 @@ def test_empty_categories_are_saved_not_replaced_with_defaults(local_jobs, tmp_p
     assert json.loads(jobs.get_job(response.json["job_id"])["options"])["categories"] == []
 
 
+def test_scan_without_subtitle_output_does_not_request_a_saved_transcript(local_jobs, tmp_path):
+    video = tmp_path / "movie.mp4"
+    video.touch()
+    settings.save({"subtitle_mode": "none"})
+    with patch("webapp.app.library.resolve_safe", return_value=video):
+        response = local_jobs.post("/api/scan", json={"path": str(video)})
+    assert response.status_code == 200
+    command = jobs.build_scan_command(jobs.get_job(response.json["job_id"]))
+    assert "--no-burn-subs" in command and "--save-transcript" not in command
+
+
 def test_legacy_global_switch_migrates_next_job_default_once(local_jobs):
     settings._SETTINGS_PATH.write_text(json.dumps({"profanity_audio": "replace", "actions": {"nudity": "cut"}}))
     cfg = settings.load()
@@ -114,7 +129,9 @@ def test_legacy_switch_does_not_override_cut_default(local_jobs):
 def test_render_uses_edl_actions_not_global_or_future_defaults(local_jobs, tmp_path):
     video = tmp_path / "movie.mp4"
     video.touch()
-    scan_id = jobs.create_job("scan", str(video), options={"actions": {"profanity": "replace"}, "output_location": "source"})
+    scan_id = jobs.create_job("scan", str(video), options={
+        "actions": {"profanity": "replace", "drugs": "keep"}, "output_location": "source",
+    })
     path = tmp_path / "edl.json"
     EditDecisionList(decisions=[word_decision(action="replace"), word_decision(4, 4.5)]).to_json(path)
     jobs.update_job(scan_id, status=jobs.DONE, edl_path=str(path))
@@ -126,6 +143,7 @@ def test_render_uses_edl_actions_not_global_or_future_defaults(local_jobs, tmp_p
     command = jobs.build_render_command(render)
     assert command[command.index("--profanity-audio") + 1] == "mute"
     assert command[command.index("--speech-host") + 1] == "http://192.168.1.20:8765"
+    assert "drugs=keep" in command and "profanity=replace" in command
     assert [d.action for d in EditDecisionList.from_json(path)] == ["replace", "mute"]
 
 
@@ -141,6 +159,21 @@ def test_review_replace_action_round_trip_and_summary(local_jobs, tmp_path):
     bad = local_jobs.post(f"/api/job/{job_id}/edl/decision", json={"index": 1, "action": "replace"})
     assert bad.status_code == 400
     assert settings.load()["actions"]["profanity"] == "mute"  # individual edits aren't next-job defaults
+
+
+def test_review_can_change_a_scene_to_blur_and_preview_it(local_jobs, tmp_path):
+    video, edl, preview = (tmp_path / f"test{suffix}" for suffix in (".mkv", ".json", ".mp4"))
+    video.touch()
+    preview.write_bytes(b"video")
+    EditDecisionList(decisions=[EditDecision(3, 5, "cut", "sex")]).to_json(edl)
+    job_id = jobs.create_job("scan", str(video), edl_path=str(edl), options={"nudity_model": "fast"})
+    edit = local_jobs.post(f"/api/job/{job_id}/edl/decision", json={"index": 0, "action": "blur"})
+    assert edit.status_code == 200 and edit.json["summary"]["blurs"] == 1
+    with patch("webapp.app.library.resolve_safe", return_value=video), \
+         patch("webapp.review.blur_clip", return_value=preview) as render_preview:
+        response = local_jobs.get(f"/api/job/{job_id}/blur/0")
+    assert response.status_code == 200 and response.mimetype == "video/mp4"
+    render_preview.assert_called_once_with(job_id, video, 3, 5, "fast")
 
 
 def test_scan_and_cli_emit_explicit_replace_with_word_precision(cli_args):

@@ -36,6 +36,7 @@ _SIMPLE_ARG_MAP: list[tuple[str, str]] = [
     ("nudity_model", "nudity_model"),
     ("nudity_all_frames", "nudity_all_frames"),
     ("nudity_second_opinion", "nudity_second_opinion"),
+    ("blur_nudity_cut_sex", "blur_nudity_cut_sex"),
     ("nudity_strong_threshold", "nudity_strong_threshold"),
     ("nudity_confirmation_threshold", "nudity_confirmation_threshold"),
     ("word_end_padding_ms", "word_end_padding_ms"),
@@ -160,6 +161,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Run NudeNet on every frame of the original video (slowest).")
     p.add_argument("--nudity-second-opinion", action="store_true", default=None,
                    help="Use the configured Ollama vision model to check NudeNet hits and look for more nudity.")
+    p.add_argument("--blur-nudity-cut-sex", action="store_true", default=None,
+                   help="Blur exposed anatomy and use Ollama to cut shots with sexual activity.")
     p.add_argument("--nudity-strong-threshold", type=float, default=None,
                    help="Confidence at which one explicit hit is enough after rescan.")
     p.add_argument("--nudity-confirmation-threshold", type=float, default=None,
@@ -266,6 +269,8 @@ def _options_from_args(args: argparse.Namespace, **overrides) -> PipelineOptions
         audio_track=args.audio_track,
         prefer_language=args.prefer_language,
         save_transcript=Path(args.save_transcript) if args.save_transcript else None,
+        burn_subs=not args.no_burn_subs,
+        soft_subs=args.soft_subs,
     )
     fields.update(overrides)
     return PipelineOptions(**fields)
@@ -315,8 +320,6 @@ def cmd_clean(args) -> int:
         output=Path(args.output) if args.output else video.with_name(f"{video.stem}.clean{video.suffix}"),
         edl_in=Path(args.edl) if args.edl else None,
         edl_out=Path(args.edl_out) if args.edl_out else None,
-        burn_subs=not args.no_burn_subs,
-        soft_subs=args.soft_subs,
     )
     out, edl = run_full(opts, config)
     console.print(f"[green bold]Wrote[/green bold] {out}")
@@ -467,13 +470,13 @@ def _review_loop(cuts, video: Path, subs: list, out_dir: Path) -> None:
 
             console.print()
             console.print(
-                f"[bold]Cut {i}/{len(cuts)}[/bold]  "
+                f"[bold]{d.action.capitalize()} {i}/{len(cuts)}[/bold]  "
                 f"{fmt_timestamp(d.start)} → {fmt_timestamp(d.end)}  "
                 f"({d.duration:.1f}s)  [cyan]{d.category}[/cyan]  "
                 f"[white]via {d.source}[/white]"
             )
             if not d.accepted:
-                console.print("  Unselected. Press y to accept this cut.")
+                console.print("  Unselected. Press y to accept this edit.")
             console.print(f"  reason: {d.reason[:MAX_REASON_LENGTH]}", markup=False)
             if lines:
                 console.print("  dialogue:")
@@ -627,7 +630,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("edl", help="EDL JSON file to modify.")
     p_add.add_argument("--start", required=True, help="Start timestamp (MM:SS or H:MM:SS or seconds).")
     p_add.add_argument("--end", required=True, help="End timestamp.")
-    p_add.add_argument("--action", choices=["cut", "mute"], default="cut")
+    p_add.add_argument("--action", choices=["cut", "mute", "blur"], default="cut")
     p_add.add_argument("--category", default="manual")
     p_add.add_argument("--reason", default=None)
     p_add.add_argument("--snap", action="store_true", help="Snap range outward to nearest shot boundaries.")

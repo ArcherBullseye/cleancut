@@ -34,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "llm_model": "qwen3.5:9b" if _IS_MAC else "llama3.2:3b",
     "vlm_model": "qwen3.5:9b" if _IS_MAC else "moondream",
     "local_ai_enabled": _IS_MAC,
-    # Per-category action. "keep" means detected but never edited.
+    # Per-category action. "keep" skips category-specific checks and edits.
     "actions": {
         "profanity": "mute",
         "drugs": "mute",
@@ -65,6 +65,7 @@ DEFAULTS: dict[str, Any] = {
     "use_visual": True,
     "nudity_all_frames": False,
     "nudity_second_opinion": False,
+    "blur_nudity_cut_sex": False,
     "allow_solo_visual": False,
     "word_end_padding_ms": 200,
     "preserve_background": False,
@@ -141,7 +142,7 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
                 not isinstance(value, list) or any(cat not in tuple(DEFAULTS["actions"]) for cat in value)
             ):
                 continue
-            if key in {"auto_render", "use_visual", "nudity_all_frames", "nudity_second_opinion", "allow_solo_visual",
+            if key in {"auto_render", "use_visual", "nudity_all_frames", "nudity_second_opinion", "blur_nudity_cut_sex", "allow_solo_visual",
                        "local_ai_enabled"} and not isinstance(value, bool):
                 continue
             if key == "preserve_background" and not isinstance(value, bool):

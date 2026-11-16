@@ -131,8 +131,10 @@ def build_plan(
         f"  Visual NudeNet:  {'on' if use_visual else 'off'} "
         f"({coverage}, threshold {config.visual_threshold})"
     )
-    if config.nudity_second_opinion and use_visual and "nudity" in config.enabled_categories:
+    if config.nudity_second_opinion and use_visual and config.edits_category("nudity"):
         lines.append(f"  Nudity second opinion: {config.vlm_model} (verification and full-timeline sampling)")
+    if config.blur_nudity_cut_sex:
+        lines.append(f"  Blur nudity and cut sex scenes ({config.vlm_model})")
     lines.append(
         f"  Snap cuts to shots: {'yes' if config.snap_cuts_to_scenes else 'no'}"
     )
@@ -177,9 +179,9 @@ def build_results_report(
     lines.append("")
 
     decisions = [d for d in edl.decisions if d.accepted]
-    pending = [d for d in edl.decisions if not d.accepted and d.reason.startswith("[needs review;")]
+    pending = [d for d in edl.decisions if not d.accepted and d.reason.startswith("[needs review")]
     if pending:
-        lines.append(f"{len(pending)} unselected nudity suggestion(s). Open the EDL in Review to inspect them.")
+        lines.append(f"{len(pending)} unselected suggestion(s). Open the EDL in Review to inspect them.")
         lines.append("")
     if not decisions:
         lines.append("No accepted decisions." if pending else "No decisions emitted — nothing flagged.")
@@ -188,6 +190,7 @@ def build_results_report(
     n_mute = sum(1 for d in decisions if d.action == "mute")
     n_cut = sum(1 for d in decisions if d.action == "cut")
     n_replace = sum(1 for d in decisions if d.action == "replace")
+    n_blur = sum(1 for d in decisions if d.action == "blur")
     t_mute = sum(d.duration for d in decisions if d.action == "mute")
     t_cut = sum(d.duration for d in decisions if d.action == "cut")
 
@@ -196,6 +199,8 @@ def build_results_report(
     lines.append(f"  Total decisions: {len(decisions)}")
     lines.append(f"  Mutes:           {n_mute}  ({_fmt_duration(t_mute)} of audio)")
     lines.append(f"  Cuts:            {n_cut}  ({_fmt_duration(t_cut)} of video)")
+    if n_blur:
+        lines.append(f"  Blurs:           {n_blur}")
     if n_replace:
         lines.append(f"  Replacements:    {n_replace}  (voice generation attempted; mute fallback)")
     if original_duration:

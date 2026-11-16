@@ -47,6 +47,8 @@ _STAGE_MARKERS: list[tuple[str, str]] = [
     ("Detecting shot boundaries", "Detecting shots"),
     ("Visual scan", "Visual scan"),
     ("Checking NudeNet candidates", "Checking NudeNet candidates"),
+    ("Checking for sexual activity", "Checking for sexual activity"),
+    ("Locating blur regions", "Locating blur regions"),
     ("Looking for additional nudity", "Looking for additional nudity"),
     ("LLM dialogue scan", "LLM dialogue scan"),
     ("Audio event scan", "Audio event scan"),
@@ -377,9 +379,10 @@ def _category_flags(opts: dict[str, Any]) -> list[str]:
     """Translate the UI's category/action selections into CLI flags."""
     args: list[str] = []
     all_categories = ("profanity", "drugs", "sex", "violence", "nudity")
-    enabled = set(opts.get("categories") or [])
-    for cat in all_categories:
-        args += ["--enable-category" if cat in enabled else "--disable-category", cat]
+    if "categories" in opts:
+        enabled = set(opts["categories"] or [])
+        for cat in all_categories:
+            args += ["--enable-category" if cat in enabled else "--disable-category", cat]
     for cat, action in (opts.get("actions") or {}).items():
         if cat in all_categories and action in ("mute", "replace", "cut", "keep"):
             args += ["--action", f"{cat}={action}"]
@@ -393,7 +396,7 @@ def _ollama_flags(opts: dict[str, Any], preset: str) -> list[str]:
     host = (opts.get("ollama_host") or "").strip()
     if not host:
         args = ["--no-llm", "--no-vlm"]
-        if opts.get("nudity_second_opinion") and opts.get("vlm_model"):
+        if (opts.get("nudity_second_opinion") or opts.get("blur_nudity_cut_sex")) and opts.get("vlm_model"):
             args += ["--vlm-model", opts["vlm_model"]]
         return args
     args = ["--llm-host", host]
@@ -420,11 +423,14 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         sys.executable, "-u", "-m", "cleancut", "scan", job["video_path"],
         "--preset", job["preset"] or "balanced",
         "-o", str(edl_path_for(job_id)),
-        "--save-transcript", str(transcript_path(job_id)),
         "--prefer-language", opts.get("prefer_language") or "eng",
     ]
     cmd += _category_flags(opts)
     cmd += ["--word-end-padding-ms", str(opts.get("word_end_padding_ms", 200))]
+    if opts.get("subtitle_mode") == "none":
+        cmd.append("--no-burn-subs")
+    else:
+        cmd += ["--save-transcript", str(transcript_path(job_id))]
     cmd += _ollama_flags(opts, job["preset"])
     if opts.get("use_audio_events") is False:
         cmd.append("--no-audio-events")
@@ -436,6 +442,8 @@ def build_scan_command(job: dict[str, Any]) -> list[str]:
         cmd.append("--nudity-all-frames")
     if opts.get("nudity_second_opinion"):
         cmd.append("--nudity-second-opinion")
+    if opts.get("blur_nudity_cut_sex"):
+        cmd.append("--blur-nudity-cut-sex")
     if not opts.get("analysis_proxy", True):
         cmd.append("--no-analysis-proxy")
     elif opts.get("analysis_height"):
@@ -470,6 +478,8 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
                 opts.get("speech_model") or "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]
     if opts.get("preserve_background"):
         cmd.append("--preserve-background")
+    if opts.get("nudity_model") in {"accurate", "fast"}:
+        cmd += ["--nudity-model", opts["nudity_model"]]
     if opts.get("audio_track") not in (None, ""):
         cmd += ["--audio-track", str(opts["audio_track"])]
     # Reuse the scan's transcript. Without it, `clean` re-runs Whisper purely to
@@ -482,6 +492,8 @@ def build_render_command(job: dict[str, Any]) -> list[str]:
     # to run Whisper it both saved a transcript and cached the result, so this
     # cannot turn into a second hours-long transcription.
     mode = opts.get("subtitle_mode", "soft")
+    if "categories" in opts or "actions" in opts:
+        cmd += _category_flags(opts)
     if mode == "none":
         cmd.append("--no-burn-subs")
     elif mode == "soft":
@@ -745,6 +757,9 @@ def _queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) 
         "speech_model": cfg.get("speech_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"),
         "audio_track": opts.get("audio_track"),
     }
+    for key in ("categories", "actions", "nudity_model"):
+        if key in opts:
+            render_opts[key] = opts[key]
     render_opts.update(overrides or {})
     if opts.get("integration_id"):
         from webapp import integrations
@@ -756,7 +771,7 @@ def _queue_render(scan_job_id: int, *, overrides: dict[str, Any] | None = None) 
         # Use the original container, never MP4 bytes under an MKV filename.
         output = video
         for key in render_opts:
-            if key in opts and key not in {"subs_path", "audio_track"}:
+            if key in opts and key not in {"subs_path", "audio_track", "subtitle_mode"}:
                 render_opts[key] = opts[key]
         render_opts.update(overrides or {})
         render_opts.update(integration_id=opts["integration_id"], render_validation="full")
