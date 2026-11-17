@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from cleancut.editor_ranges import Range, normalize_cuts
 from webapp.paths import job_dir
 
 CATEGORIES = ("profanity", "drugs", "sex", "violence", "nudity")
@@ -22,37 +23,54 @@ ACTIONS = ("mute", "replace", "cut", "keep", "blur")
 
 # A preview is for judging one decision, not for watching the film.
 MAX_CLIP_SECONDS = 40.0
+MAX_BLUR_SECONDS = 8
 CLIP_LEAD_SECONDS = 2.0
 
 
 def fmt_timestamp(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    hours, rem = divmod(int(seconds), 3600)
+    whole, milliseconds = divmod(round(max(0.0, float(seconds)) * 1000), 1000)
+    hours, rem = divmod(whole, 3600)
     minutes, secs = divmod(rem, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    return f"{minutes}:{secs:02d}"
+    clock = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+    return f"{clock}.{milliseconds:03d}" if milliseconds else clock
 
 
 def parse_timestamp(value: str) -> float:
     """Accept 'SS', 'MM:SS' or 'H:MM:SS' (fractional seconds allowed)."""
     parts = str(value).strip().split(":")
-    if not parts or any(p == "" for p in parts):
+    if len(parts) > 3 or any(p == "" for p in parts):
         raise ValueError(f"bad timestamp: {value!r}")
     total = 0.0
     for part in parts:
-        total = total * 60 + float(part)
+        number = float(part)
+        if not math.isfinite(number) or number < 0:
+            raise ValueError("Timestamp components must be finite and nonnegative.")
+        total = total * 60 + number
+    if not math.isfinite(total):
+        raise ValueError("Timestamp must be finite.")
     return total
+
+
+def _cut_ranges(decisions: list[dict[str, Any]]) -> list[Range]:
+    return normalize_cuts([
+        Range(d["start"], d["end"]) for d in decisions
+        if d.get("action") == "cut" and d.get("accepted", True)
+    ])
 
 
 def load_edl(path: str | Path) -> dict[str, Any]:
     data = json.loads(Path(path).read_text())
     decisions = data.get("decisions", [])
+    cuts = _cut_ranges(decisions)
     for index, decision in enumerate(decisions):
         decision["index"] = index
         decision["duration"] = max(0.0, decision.get("end", 0) - decision.get("start", 0))
         decision["start_label"] = fmt_timestamp(decision.get("start", 0))
         decision["end_label"] = fmt_timestamp(decision.get("end", 0))
+        if decision.get("action") == "blur":
+            decision["covered_by_cut"] = any(
+                cut.start <= decision["start"] and decision["end"] <= cut.end for cut in cuts
+            )
     return data
 
 
@@ -114,7 +132,7 @@ def summarize(data: dict[str, Any]) -> dict[str, Any]:
         "nudity_disagreements": sum(
             "[Ollama disagrees]" in str(d.get("reason", "")) for d in decisions
         ),
-        "seconds_cut": round(sum(d["end"] - d["start"] for d in cuts), 1),
+        "seconds_cut": round(sum(cut.duration for cut in _cut_ranges(cuts)), 1),
         "seconds_muted": round(sum(d["end"] - d["start"] for d in mutes), 1),
         "seconds_replaced": round(sum(d["end"] - d["start"] for d in replacements), 1),
         "by_category": by_category,
@@ -126,7 +144,7 @@ def apply_edit(data: dict[str, Any], index: int, changes: dict[str, Any]) -> dic
     decisions = data.get("decisions", [])
     if not 0 <= index < len(decisions):
         raise IndexError(f"no decision at index {index}")
-    decision = decisions[index]
+    decision = dict(decisions[index])
     if changes.get("action") == "replace" and "profanity" not in str(decision.get("category", "")).split("+"):
         raise ValueError("Replace is only supported for profanity words.")
     if changes.get("action") == "blur" and not {"nudity", "sex"}.intersection(decision.get("category", "").split("+")):
@@ -141,6 +159,7 @@ def apply_edit(data: dict[str, Any], index: int, changes: dict[str, Any]) -> dic
         decision["end"] = parse_timestamp(changes["end"])
     if decision["end"] <= decision["start"]:
         raise ValueError("end must be after start")
+    decisions[index] = decision
     return decision
 
 
@@ -240,15 +259,15 @@ def blur_clip(job_id: int, video: Path, start: float, end: float, model: str) ->
     from cleancut import cache
     from cleancut.blur import prepare_blur
     from cleancut.config import Config
-    from cleancut.editor import Range, apply_mutes_and_subs
+    from cleancut.editor import apply_mutes_and_subs
 
     if not math.isfinite(start) or not math.isfinite(end) or end <= start:
         raise ValueError("Invalid blur preview range.")
     start = max(0.0, start)
-    end = min(end, start + 8.0)
+    end = min(end, start + MAX_BLUR_SECONDS)
     fingerprint = video.stat()
     key = cache.config_hash(start=start, end=end, model=model, size=fingerprint.st_size,
-                            mtime=fingerprint.st_mtime_ns, version=1)
+                            mtime=fingerprint.st_mtime_ns, version=2)
     out = _preview_dir(job_id, "blur-clips") / f"{key}.mp4"
     if out.exists():
         return out
@@ -262,7 +281,8 @@ def blur_clip(job_id: int, video: Path, start: float, end: float, model: str) ->
             "-c:a", "aac", str(excerpt),
         ], check=True, capture_output=True, timeout=120)
         config = Config(nudity_model=model)
-        mask = prepare_blur(excerpt, [Range(start-left, end-left)], config, Path(work) / "blur.commands")
+        mask = prepare_blur(excerpt, [Range(start-left, end-left)], config, Path(work) / "blur.commands",
+                            use_cache=False)
         staged = Path(work) / "preview.mp4"
         apply_mutes_and_subs(excerpt, [], None, staged, burn_subs=False, validation="quick", blur=mask)
         staged.replace(out)

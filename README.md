@@ -77,7 +77,8 @@ actions for that scan. Detected sexual activity cuts the containing shots plus
 adjacent shots identified as continuations. Ambiguous scenes are left unselected
 for Review. Nudity edits preserve timing and audio. If a frame in an accepted blur
 range has no usable detection box, the renderer blurs the full frame. In Review,
-use **Preview blur** on a blur edit or change the action to **Cut** or **Keep**.
+use **Preview blur** to compare original and blurred footage. Step through longer
+edits with **Next segment**, or change the action to **Cut** or **Keep**.
 
 Word censorship adds a configurable ending buffer (200 ms by default), even
 when the next word's estimated onset overlaps. This may trim closely following

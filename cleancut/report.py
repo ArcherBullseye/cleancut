@@ -9,6 +9,7 @@ from cleancut.config import Config
 from cleancut.constants import MAX_REASON_LENGTH
 from cleancut.edl import EditDecisionList
 from cleancut.edl_ops import fmt_timestamp
+from cleancut.editor_ranges import edl_to_ranges, normalize_cuts
 from cleancut.probe import (
     IMAGE_SUBTITLE_CODECS,
     TEXT_SUBTITLE_CODECS,
@@ -192,7 +193,7 @@ def build_results_report(
     n_replace = sum(1 for d in decisions if d.action == "replace")
     n_blur = sum(1 for d in decisions if d.action == "blur")
     t_mute = sum(d.duration for d in decisions if d.action == "mute")
-    t_cut = sum(d.duration for d in decisions if d.action == "cut")
+    t_cut = sum(span.duration for span in normalize_cuts(edl_to_ranges(edl, "cut"), original_duration))
 
     lines.append("Summary")
     lines.append("-" * 70)

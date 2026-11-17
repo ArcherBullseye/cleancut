@@ -22,9 +22,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
-
 
 CACHE_DIR = Path(os.environ.get("CLEANCUT_CACHE_DIR", str(Path.home() / ".cache" / "cleancut")))
 
@@ -75,13 +75,21 @@ def save(video: Path, feature: str, config_hash_val: str, payload: dict) -> Path
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _cache_key(video, feature, config_hash_val)
     # Write-temp-then-rename so an interrupted save can't leave corrupt JSON.
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({
-        "video": _video_fingerprint(video),
-        "config_hash": config_hash_val,
-        "payload": payload,
-    }, indent=2))
-    tmp.replace(path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=".cache-", suffix=".tmp", delete=False,
+        ) as handle:
+            tmp = Path(handle.name)
+            json.dump({
+                "video": _video_fingerprint(video),
+                "config_hash": config_hash_val,
+                "payload": payload,
+            }, handle, indent=2)
+        tmp.replace(path)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     return path
 
 

@@ -9,6 +9,8 @@ Used for two things:
 
 from __future__ import annotations
 
+import math
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,11 +56,11 @@ def detect_shots(
             "Scene detection requires extras. Install with: pip install -e '.[scenes]'"
         ) from e
 
-    scene_list = detect(str(video_path), ContentDetector(threshold=threshold),
-                        start_in_scene=include_single_shot)
-    if include_single_shot and scene_list:
-        shots = _source_timed_shots(video_path, scene_list)
+    detector = ContentDetector(threshold=threshold)
+    if include_single_shot:
+        shots = _detect_source_timed_shots(video_path, detector)
     else:
+        scene_list = detect(str(video_path), detector)
         shots = [Shot(start=float(s.get_seconds()), end=float(e.get_seconds())) for s, e in scene_list]
     # Empty results cache too — otherwise a shotless video re-runs the full
     # pass on every scan.
@@ -70,27 +72,43 @@ def detect_shots(
     return shots
 
 
-def _source_timed_shots(video: Path, scenes) -> list[Shot]:
+def _detect_source_timed_shots(video: Path, detector) -> list[Shot]:
+    """Record source presentation times during detection, avoiding a second decode."""
     import cv2
+    from scenedetect import SceneManager
+    from scenedetect.backends.opencv import VideoCaptureAdapter
 
     from cleancut.probe import probe_video_timing
-    from cleancut.visual import _open_capture, iter_frame_positions
+    from cleancut.visual import _open_capture
 
     offset, duration, video_end = probe_video_timing(video)
-    bounds = {time.get_frames() for scene in scenes for time in scene}
-    times = {}
+    times = array("d")
     cap = _open_capture(cv2, video, source_timestamps=True)
+
+    class TimestampedCapture(VideoCaptureAdapter):
+        def read(self, decode: bool = True, advance: bool = True):
+            frame = super().read(decode=decode, advance=advance)
+            if advance and frame is not False:
+                timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000 + offset
+                if not math.isfinite(timestamp) or (times and timestamp < times[-1]):
+                    raise RuntimeError("Cannot read source frame timestamps.")
+                times.append(timestamp)
+            return frame
+
     try:
-        for index, timestamp in iter_frame_positions(cv2, cap, offset):
-            if index in bounds:
-                times[index] = max(0.0, timestamp)
-        if index + 1 in bounds:
-            times[index + 1] = min(duration, video_end) if video_end is not None else duration
+        manager = SceneManager()
+        manager.add_detector(detector)
+        manager.detect_scenes(TimestampedCapture(cap))
+        scenes = manager.get_scene_list(start_in_scene=True)
     finally:
         cap.release()
+
+    if not times or (len(times) > 1 and times[0] == times[-1]):
+        raise RuntimeError("Cannot read source frames with timestamps.")
+    times.append(min(duration, video_end) if video_end is not None else duration)
     try:
-        return [Shot(times[s.get_frames()], times[e.get_frames()]) for s, e in scenes]
-    except KeyError as exc:
+        return [Shot(max(0.0, times[s.get_frames()]), max(0.0, times[e.get_frames()])) for s, e in scenes]
+    except IndexError as exc:
         raise RuntimeError("Could not align shot boundaries with the source frames.") from exc
 
 

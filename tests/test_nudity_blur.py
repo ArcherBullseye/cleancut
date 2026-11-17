@@ -10,7 +10,7 @@ import pytest
 from cleancut.config import Config
 from cleancut.edl import EditDecision, EditDecisionList
 from cleancut.pipeline import PipelineOptions, build_edl, render
-from cleancut.probe import audio_streams, probe_streams
+from cleancut.probe import audio_streams, probe_streams, probe_video_timing
 from cleancut.scenes import Shot, detect_shots
 from cleancut.sexual_activity import scan_sexual_activity
 
@@ -72,6 +72,24 @@ def test_activity_scan_uses_multiple_frames_from_a_single_shot(tmp_path, monkeyp
         assert scan_sexual_activity(video, shots, Config()) == []
     classify.assert_called_once()
     assert len(classify.call_args.args[2]) == 3
+
+
+def test_shot_detection_reads_variable_rate_timestamps_in_one_pass(tmp_path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Requires FFmpeg")
+    cv2 = pytest.importorskip("cv2")
+    pytest.importorskip("scenedetect")
+    video = tmp_path / "variable-rate.mkv"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=96x64:r=10:d=4",
+        "-vf", "drawbox=c=white:t=fill:enable='gte(n,20)',setpts='PTS+if(gte(N,20),5,0)'",
+        "-fps_mode", "vfr", "-c:v", "ffv1", str(video),
+    ], check=True)
+    with patch.object(cv2, "VideoCapture", wraps=cv2.VideoCapture) as capture:
+        shots = detect_shots(video, use_cache=False, include_single_shot=True)
+    capture.assert_called_once()
+    _, duration, video_end = probe_video_timing(video)
+    assert shots == [Shot(0, 2.5), Shot(2.5, min(duration, video_end or duration))]
 
 
 @pytest.mark.parametrize(("cut", "encoder", "audio"), [

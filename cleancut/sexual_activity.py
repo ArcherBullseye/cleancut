@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 from tqdm import tqdm
 
@@ -34,44 +36,96 @@ SAMPLE_INTERVAL = 0.75
 FRAMES_PER_REQUEST = 4
 
 
+def _shot_batches(
+    video: Path, shots: list[Shot], start_index: int, should_skip: Callable[[int], bool], stopped: Event,
+) -> Iterator[tuple[int, list[bytes], bool]]:
+    """Decode the timeline in order and emit model inputs and shot boundaries."""
+    import cv2
+
+    offset, _, _ = probe_video_timing(video)
+    cap = _open_capture(cv2, video, source_timestamps=True)
+    frames = iter(iter_frame_positions(cv2, cap, offset))
+    try:
+        position = next(frames, None)
+        for index, shot in enumerate(shots[start_index:], start=start_index):
+            images = []
+            short_shot = shot.duration <= SAMPLE_INTERVAL
+            interval = shot.duration / 2 if short_shot else SAMPLE_INTERVAL
+            next_sample = shot.start
+            last_sample = None
+            tail_frame = None
+            while position is not None and position[1] < shot.end:
+                if stopped.is_set():
+                    return
+                if should_skip(index):
+                    images = []
+                    tail_frame = None
+                    break
+                _, timestamp = position
+                if timestamp >= next_sample:
+                    images.append(_image_bytes(cv2, _frame_image(cap, timestamp)))
+                    last_sample = timestamp
+                    next_sample = timestamp + interval
+                    tail_frame = None
+                elif (last_sample is not None and timestamp > last_sample
+                      and timestamp >= shot.end - SAMPLE_INTERVAL
+                      and (short_shot or timestamp - last_sample >= SAMPLE_INTERVAL / 2)):
+                    # Retrieve before grabbing the next frame. Keep only the latest
+                    # candidate, and discard it if the regular cadence reaches it.
+                    tail_frame = _frame_image(cap, timestamp)
+                if len(images) == FRAMES_PER_REQUEST:
+                    yield index, images, False
+                    images = []
+                position = next(frames, None)
+            if tail_frame is not None:
+                images.append(_image_bytes(cv2, tail_frame))
+            yield index, images, True
+    finally:
+        cap.release()
+
+
 def _shot_verdicts(
     video: Path, shots: list[Shot], config: Config, *,
     previous: list[str], checkpoint: Callable[[list[str]], None],
 ) -> list[str]:
-    import cv2
+    verdicts = list(previous)
+    if len(verdicts) == len(shots):
+        return verdicts
 
-    offset, _, _ = probe_video_timing(video)
     client = make_ollama_client(config.llm_host, timeout=120.0)
     preflight_ollama(client, config.vlm_model)
-    cap = _open_capture(cv2, video, source_timestamps=True)
-    frames = iter(iter_frame_positions(cv2, cap, offset))
-    verdicts = list(previous)
+    stopped = Event()
+    active_shot = None
+    batches = _shot_batches(video, shots, len(verdicts), lambda index: index == active_shot, stopped)
+    results = set()
     try:
-        position = next(frames, None)
-        remaining = shots[len(verdicts):]
-        for shot in tqdm(remaining, desc="Checking for sexual activity", unit="shot", leave=False,
-                         initial=len(verdicts), total=len(shots)):
-            results = []
-            images = []
-            next_sample = shot.start
-            while position is not None and position[1] < shot.end:
-                _, timestamp = position
-                if timestamp >= next_sample:
-                    images.append(_image_bytes(cv2, _frame_image(cap, timestamp)))
-                    next_sample = timestamp + SAMPLE_INTERVAL
-                if len(images) == FRAMES_PER_REQUEST:
-                    results.append(_judge(client, config, images))
-                    images = []
-                    if results[-1] == "active":
-                        break
-                position = next(frames, None)
-            if images:
-                results.append(_judge(client, config, images))
-            verdicts.append(next((v for v in SCHEMA["properties"]["verdict"]["enum"] if v in results), "absent"))
-            if len(verdicts) % 30 == 0:
-                checkpoint(verdicts)
+        with ThreadPoolExecutor(max_workers=1) as decoder, tqdm(
+            desc="Checking for sexual activity", unit="shot", leave=False,
+            initial=len(verdicts), total=len(shots),
+        ) as progress:
+            pending = decoder.submit(next, batches, None)
+            try:
+                while (batch := pending.result()) is not None:
+                    index, images, last = batch
+                    # Prepare one batch ahead while Ollama evaluates the current
+                    # images. Requests still run one at a time in source order.
+                    pending = decoder.submit(next, batches, None)
+                    if images and index != active_shot:
+                        verdict = _judge(client, config, images)
+                        results.add(verdict)
+                        if verdict == "active":
+                            active_shot = index
+                    if last:
+                        verdicts.append(next((v for v in SCHEMA["properties"]["verdict"]["enum"] if v in results),
+                                             "absent"))
+                        results.clear()
+                        progress.update()
+                        if len(verdicts) % 30 == 0:
+                            checkpoint(verdicts)
+            finally:
+                stopped.set()
     finally:
-        cap.release()
+        batches.close()
     return verdicts
 
 
@@ -86,7 +140,7 @@ def scan_sexual_activity(video: Path, shots: list[Shot], config: Config) -> list
     if not shots:
         raise RuntimeError("Shot boundaries are required to cut whole sex scenes.")
     key = cache.config_hash(
-        version=1, model=config.vlm_model, host=config.llm_host, prompt=PROMPT,
+        version=2, model=config.vlm_model, host=config.llm_host, prompt=PROMPT,
         interval=SAMPLE_INTERVAL, batch=FRAMES_PER_REQUEST,
         shots=[(shot.start, shot.end) for shot in shots],
     )

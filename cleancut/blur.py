@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 
+from cleancut import cache
 from cleancut.config import Config
 from cleancut.editor_ranges import Range, normalize_cuts
 from cleancut.nudity_model import resolve_nudity_model
@@ -16,6 +18,8 @@ from cleancut.visual import (
     _open_detector,
     iter_frame_positions,
 )
+
+Box = tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -38,17 +42,38 @@ class BlurFilter:
         )
 
 
-def _frames_in_ranges(cv2, cap, offset: float, ranges: list[Range], events: dict):
+def _frames_in_ranges(
+    cv2, cap, offset: float, video_end: float, ranges: list[Range],
+    events: dict[float, list[Box]], full_frame: Box,
+):
     spans = iter(ranges)
     current = next(spans, None)
-    previous = None
+    previous = previous_when = None
+    previous_image = None
     was_selected = False
-    for _, timestamp in iter_frame_positions(cv2, cap, offset):
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    lookahead = 2 / fps if fps > 0 else 0.0
+
+    positions = chain(iter_frame_positions(cv2, cap, offset), [(None, video_end)])
+    for index, timestamp in positions:
+        if previous is not None and current and not was_selected and previous < current.start < timestamp:
+            # A displayed frame extends to the next timestamp. This matters for
+            # ranges shorter than a frame and for a long hold in a VFR video.
+            if previous_image is not None:
+                yield previous_when, previous_image
+            else:
+                events[previous_when] = [full_frame]
+            was_selected = True
+        if index is None:
+            break
         while current is not None and timestamp >= current.end:
             current = next(spans, None)
         selected = current is not None and timestamp >= current.start
         # Place the command between timestamps to allow for decoder rounding.
         when = max(0.0, (previous + timestamp) / 2 if previous is not None else timestamp - 0.001)
+        repeated = timestamp == previous
+        if repeated:
+            when = previous_when
         if selected:
             ok, image = cap.retrieve()
             if not ok:
@@ -58,11 +83,19 @@ def _frames_in_ranges(cv2, cap, offset: float, ranges: list[Range], events: dict
             events[when] = []
         if current is None:
             break
+        # Keep the frame just before a range when possible. Earlier frames can
+        # stay unconverted, including gaps between edits in long movies.
+        previous_image = None
+        if not selected and not repeated and current.start - timestamp <= lookahead:
+            ok, image = cap.retrieve()
+            if ok:
+                previous_image = image
         was_selected = selected
         previous = timestamp
+        previous_when = when
 
 
-def _boxes(hits, width: int, height: int) -> list[tuple[int, int, int, int]]:
+def _boxes(hits, width: int, height: int) -> list[Box]:
     boxes = []
     for hit in hits:
         box = hit.get("box")
@@ -77,11 +110,39 @@ def _boxes(hits, width: int, height: int) -> list[tuple[int, int, int, int]]:
     return boxes
 
 
-def prepare_blur(video: Path, ranges: list[Range], config: Config, commands: Path) -> BlurFilter:
+def _file_identity(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def prepare_blur(
+    video: Path, ranges: list[Range], config: Config, commands: Path, *, use_cache: bool = True,
+) -> BlurFilter:
     """Locate all regions in selected frames. Cover the full frame when localization fails."""
-    offset, duration, _ = probe_video_timing(video)
-    ranges = normalize_cuts(ranges, duration)
     model = resolve_nudity_model(config.nudity_model)
+    threshold = min(config.visual_threshold, 0.35)
+    ranges = normalize_cuts(ranges)
+    source_identity = _file_identity(video)
+    key = None
+    if use_cache and isinstance(model.path, Path) and model.path.is_file():
+        key = cache.config_hash(
+            version=1, model=model.name, resolution=model.resolution,
+            weights=_file_identity(model.path), source=source_identity,
+            ranges=[(r.start, r.end) for r in ranges], threshold=threshold,
+            batch_size=config.nudity_batch_size, coreml=config.nudity_coreml,
+        )
+        saved = cache.load(video, "blur", key)
+        if saved:
+            if _file_identity(video) != source_identity:
+                raise RuntimeError("Source video changed while loading blur regions.")
+            regions = saved["regions"]
+            width, height = saved["dimensions"]
+            commands.write_text(saved["commands"], encoding="utf-8")
+            print("Reusing cached nudity blur regions.", flush=True)
+            return BlurFilter(commands, regions, max(12.0, min(width, height) / 16), (width, height))
+
+    offset, duration, video_end = probe_video_timing(video)
+    ranges = normalize_cuts(ranges, duration)
     cv2, detector = _open_detector(config, model)
     cap = _open_capture(cv2, video, source_timestamps=True)
     try:
@@ -89,27 +150,32 @@ def prepare_blur(video: Path, ranges: list[Range], config: Config, commands: Pat
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if width <= 0 or height <= 0:
             raise RuntimeError("Could not read source dimensions for nudity blur.")
-        events: dict[float, list[tuple[int, int, int, int]]] = {}
+        full_frame = (0, 0, width, height)
+        events: dict[float, list[Box]] = {}
         results = _infer_frames(
-            detector, cv2, _frames_in_ranges(cv2, cap, offset, ranges, events), config.nudity_batch_size,
+            detector, cv2,
+            _frames_in_ranges(cv2, cap, offset, video_end or duration, ranges, events, full_frame),
+            config.nudity_batch_size,
             "Locating blur regions", total=None,
         )
-        fallback = 0
         for when, detections in results:
-            boxes = _boxes(_explicit_hits(detections, min(config.visual_threshold, 0.35)), width, height)
-            if not boxes:
-                boxes = [(0, 0, width, height)]
-                fallback += 1
-            events[when] = boxes
+            boxes = _boxes(_explicit_hits(detections, threshold), width, height)
+            # Frames sharing a timestamp need a mask for the union of detections.
+            regions = events.setdefault(when, [])
+            if not boxes or full_frame in boxes or full_frame in regions:
+                events[when] = [full_frame]
+            else:
+                regions.extend(box for box in boxes if box not in regions)
     finally:
         cap.release()
     regions = max(map(len, events.values()), default=0)
     if not regions:
         raise RuntimeError("No source frames were found inside the selected blur ranges.")
+    fallback = sum(boxes == [full_frame] for boxes in events.values())
     if fallback:
-        print(f"Nudity blur will cover {fallback} whole frame(s) where no region was located.", flush=True)
+        print(f"Nudity blur will cover {fallback} whole frame(s).", flush=True)
 
-    previous_boxes: list[tuple[int, int, int, int]] = []
+    previous_boxes: list[Box] = []
     with commands.open("w", encoding="utf-8") as script:
         for time, boxes in sorted(events.items()):
             changes = []
@@ -123,4 +189,13 @@ def prepare_blur(video: Path, ranges: list[Range], config: Config, commands: Pat
             if changes:
                 script.write(f"{time:.8f} {', '.join(changes)};\n")
             previous_boxes = boxes
+    if _file_identity(video) != source_identity:
+        raise RuntimeError("Source video changed while locating blur regions.")
+    if key is not None:
+        try:
+            cache.save(video, "blur", key, {
+                "commands": commands.read_text(encoding="utf-8"), "regions": regions, "dimensions": (width, height),
+            })
+        except OSError as exc:
+            print(f"Could not cache nudity blur regions: {exc}", flush=True)
     return BlurFilter(commands, regions, max(12.0, min(width, height) / 16), (width, height))

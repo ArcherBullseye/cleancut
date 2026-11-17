@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title }} - cleancut{% endblock %}
 {% block content %}
-<section class="panel" data-job-id="{{ job.id }}" id="job-root">
+<section class="panel" data-job-id="{{ job.id }}" data-blur-preview-seconds="{{ blur_preview_seconds }}" id="job-root">
   <div class="panel-head">
     <div>
       <h1 id="job-title">{{ job.title }}</h1>

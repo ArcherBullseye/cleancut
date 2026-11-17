@@ -176,6 +176,46 @@ def test_review_can_change_a_scene_to_blur_and_preview_it(local_jobs, tmp_path):
     render_preview.assert_called_once_with(job_id, video, 3, 5, "fast")
 
 
+def test_blur_review_pages_through_the_entire_edit(local_jobs, tmp_path):
+    video, edl, preview = (tmp_path / f"test{suffix}" for suffix in (".mkv", ".json", ".mp4"))
+    video.touch()
+    preview.write_bytes(b"video")
+    EditDecisionList(decisions=[EditDecision(1.25, 19.5, "blur", "nudity")]).to_json(edl)
+    job_id = jobs.create_job("scan", str(video), edl_path=str(edl))
+    with patch("webapp.app.library.resolve_safe", return_value=video), \
+         patch("webapp.review.blur_clip", return_value=preview) as render_preview:
+        url = f"/api/job/{job_id}/blur/0"
+        assert local_jobs.get(url + "?page=2").status_code == 200
+        assert local_jobs.get(url + "?page=3").status_code == 400
+        assert local_jobs.get(url + "?page=-1").status_code == 400
+        assert local_jobs.get(url + "?page=nope").status_code == 400
+    render_preview.assert_called_once_with(job_id, video, 17.25, 19.5, "accurate")
+
+
+def test_review_preserves_subsecond_edits_and_marks_blurs_covered_by_cuts(local_jobs, tmp_path):
+    edl = tmp_path / "edl.json"
+    EditDecisionList(decisions=[
+        EditDecision(1.123456, 1.987654, "blur", "nudity"),
+        EditDecision(1, 1.7, "cut", "sex"),
+        EditDecision(1.6, 2, "cut", "sex"),
+    ]).to_json(edl)
+    job_id = jobs.create_job("scan", str(tmp_path / "movie.mkv"), edl_path=str(edl))
+    url = f"/api/job/{job_id}/edl"
+    reviewed = local_jobs.get(url).json
+    blur = reviewed["edl"]["decisions"][0]
+    assert blur["start_label"] == "0:01.123"
+    assert blur["end_label"] == "0:01.988"
+    assert blur["covered_by_cut"] and reviewed["summary"]["seconds_cut"] == 1
+    for bad in ("NaN", "Infinity", "0:-1"):
+        response = local_jobs.post(url + "/decision", json={"index": 0, "end": bad})
+        assert response.status_code == 400
+    response = local_jobs.post(url + "/decision", json={"index": 2, "accepted": False})
+    assert response.status_code == 200
+    unchanged = local_jobs.get(url).json["edl"]["decisions"][0]
+    assert not unchanged["covered_by_cut"]
+    assert (unchanged["start"], unchanged["end"]) == (1.123456, 1.987654)
+
+
 def test_scan_and_cli_emit_explicit_replace_with_word_precision(cli_args):
     from cleancut.cli import _apply_common
 

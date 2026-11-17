@@ -1,6 +1,7 @@
 /* Job progress + EDL review. */
 
 const JOB_ID = document.getElementById("job-root").dataset.jobId;
+const BLUR_PREVIEW_SECONDS = Number(document.getElementById("job-root").dataset.blurPreviewSeconds);
 const ACTIVE = new Set(["queued", "running"]);
 
 let job = null;
@@ -206,6 +207,7 @@ function decisionCard(decision) {
       el("span", { class: "muted small", text: `${decision.duration.toFixed(1)}s` }),
     ]),
     el("div", { class: "reason", text: decision.reason || "" }),
+    decision.covered_by_cut ? el("p", {class: "muted small", text: "Covered by an accepted cut."}) : null,
     ...quote,
     el("div", { class: "controls" }, [
       toggle,
@@ -213,7 +215,7 @@ function decisionCard(decision) {
       ...speechControls,
       el("button", {
         class: "ghost", text: decision.action === "blur" ? "Preview blur" : "Preview clip",
-        onclick: (e) => showClip(card, decision, e.target),
+        onclick: () => showClip(card, decision),
       }),
       el("button", {
         class: "ghost", text: "Trim",
@@ -222,7 +224,7 @@ function decisionCard(decision) {
     ]),
   ]);
 
-  thumb.addEventListener("click", () => showClip(card, decision, null));
+  thumb.addEventListener("click", () => showClip(card, decision));
   card.appendChild(thumb);
   card.appendChild(body);
   return card;
@@ -272,42 +274,54 @@ async function showBackground(card, decision, button) {
   }
 }
 
-function showClip(card, decision, button) {
-  if (card.querySelector("video")) return;
-  if (button) { button.disabled = true; button.textContent = "Building..."; }
-  const blurred = decision.action === "blur" && button;
-  const label = blurred ? "Preview blur" : "Preview clip";
+function showClip(card, decision, mode = decision.action === "blur" ? "blurred" : "original", page = 0) {
+  card.querySelector(".clip-preview")?.remove();
+  const canCompare = decision.action === "blur";
+  const start = decision.start + page * BLUR_PREVIEW_SECONDS;
+  const end = canCompare ? Math.min(decision.end, start + BLUR_PREVIEW_SECONDS) : decision.end;
+  const preview = el("div", {class: "clip-preview"});
+  const status = el("p", {class: "muted small", role: "status", text: "Building preview…"});
   const video = el("video", {
     controls: "", preload: "metadata", autoplay: "",
-    src: blurred ? `/api/job/${JOB_ID}/blur/${decision.index}` :
-      `/api/job/${JOB_ID}/clip?start=${decision.start.toFixed(2)}&end=${decision.end.toFixed(2)}`,
+    src: mode === "blurred" ? `/api/job/${JOB_ID}/blur/${decision.index}?page=${page}` :
+      `/api/job/${JOB_ID}/clip?start=${start}&end=${end}`,
   });
-  video.addEventListener("loadeddata", () => {
-    if (button) { button.disabled = false; button.textContent = "Hide clip"; }
-  });
+  video.addEventListener("loadeddata", () => { status.hidden = true; });
   video.addEventListener("error", () => {
-    toast("Could not build a preview for that range.", true);
+    status.hidden = false;
+    status.textContent = "Could not build the preview. Try opening it again.";
     video.remove();
-    if (button) {
-      button.disabled = false;
-      button.textContent = label;
-      button.onclick = (e) => showClip(card, decision, e.target);
-    }
   });
-  card.querySelector(".body").appendChild(video);
-  if (button) {
-    button.onclick = () => {
-      video.remove();
-      button.textContent = label;
-      button.onclick = (e) => showClip(card, decision, e.target);
-    };
+  const controls = el("div", {class: "controls"});
+  if (canCompare) {
+    const segments = Math.max(1, Math.ceil((decision.end - decision.start - 1e-8) / BLUR_PREVIEW_SECONDS));
+    for (const variant of ["blurred", "original"]) {
+      controls.appendChild(el("button", {
+        class: variant === mode ? "primary" : "ghost",
+        text: variant === "blurred" ? "Blurred preview" : "Original preview",
+        "aria-pressed": String(variant === mode),
+        onclick: () => showClip(card, decision, variant, page),
+      }));
+    }
+    if (page > 0) controls.appendChild(el("button", {
+      class: "ghost", text: "Previous segment", onclick: () => showClip(card, decision, mode, page - 1),
+    }));
+    if (page + 1 < segments) controls.appendChild(el("button", {
+      class: "ghost", text: "Next segment", onclick: () => showClip(card, decision, mode, page + 1),
+    }));
+    if (segments > 1) controls.appendChild(el("span", {class: "muted small", text: `${page + 1} of ${segments}`}));
   }
+  controls.appendChild(el("button", {class: "ghost", text: "Close preview", onclick: () => preview.remove()}));
+  preview.appendChild(controls);
+  preview.appendChild(status);
+  preview.appendChild(video);
+  card.querySelector(".body").appendChild(preview);
 }
 
 async function trim(decision) {
-  const start = prompt("New start (MM:SS or H:MM:SS)", decision.start_label);
+  const start = prompt("New start (seconds or MM:SS.sss)", String(decision.start));
   if (start === null) return;
-  const end = prompt("New end (MM:SS or H:MM:SS)", decision.end_label);
+  const end = prompt("New end (seconds or MM:SS.sss)", String(decision.end));
   if (end === null) return;
   await edit(decision.index, { start, end });
 }

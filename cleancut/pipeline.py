@@ -323,7 +323,8 @@ def build_edl(opts: PipelineOptions, config: Config) -> tuple[EditDecisionList, 
     analysis_video = opts.video
     run_nudity = config.blur_nudity_cut_sex or (opts.use_visual and config.edits_category("nudity"))
     sampled_nudity = run_nudity and not config.nudity_all_frames
-    if config.analysis_proxy_enabled and (opts.use_scenes or sampled_nudity or config.blur_nudity_cut_sex):
+    uses_proxy = sampled_nudity or (run_vlm if config.blur_nudity_cut_sex else opts.use_scenes)
+    if config.analysis_proxy_enabled and uses_proxy:
         try:
             from cleancut.proxy import analysis_source
 

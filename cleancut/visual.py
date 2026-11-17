@@ -11,6 +11,7 @@ import math
 import platform
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from importlib.metadata import PackageNotFoundError, version
 from itertools import islice
 from pathlib import Path
 
@@ -52,6 +53,40 @@ def _explicit_hits(detections, threshold: float) -> list[dict]:
 
 def _is_explicit(detections, threshold: float) -> bool:
     return bool(_explicit_hits(detections, threshold))
+
+
+class _CompactNudeNetSession:
+    """Skip rows NudeNet 3.4.2 would discard before box processing and NMS."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+    def run(self, *args, **kwargs):
+        import numpy as np
+
+        outputs = self._session.run(*args, **kwargs)
+        if len(outputs) != 1:
+            return outputs
+        scores = outputs[0]
+        # The bundled and accurate ONNX models return [batch, 4 + 18, anchors].
+        if not isinstance(scores, np.ndarray) or scores.ndim != 3 or scores.shape[1] != 22 or scores.shape[2] <= 2:
+            return outputs
+
+        keep = np.max(scores[:, 4:, :], axis=1) >= 0.2
+        counts = np.count_nonzero(keep, axis=1)
+        # The upstream squeeze needs at least two columns. Zero-score padding
+        # is dropped there and never reaches non-max suppression.
+        columns = max(2, int(counts.max(initial=0)))
+        if columns >= scores.shape[2]:
+            return outputs
+        compact = np.zeros((*scores.shape[:2], columns), dtype=scores.dtype)
+        for i, count in enumerate(counts):
+            if count:
+                compact[i, :, :count] = scores[i][:, keep[i]]
+        return [compact]
 
 
 def _open_detector(config: Config, model: NudityModel):
@@ -97,6 +132,12 @@ def _open_detector(config: Config, model: NudityModel):
         except Exception as exc:  # noqa: BLE001 - any provider failure must retain CPU fallback
             print(f"CoreML unavailable for NudeNet ({exc}); using CPU inference.")
 
+    if NudeDetector.__module__ == "nudenet.nudenet":
+        try:
+            if version("nudenet") == "3.4.2":
+                detector.onnx_session = _CompactNudeNetSession(detector.onnx_session)
+        except PackageNotFoundError:
+            pass
     detector._cleancut_backend = backend
     detector._cleancut_model = model.name
     print(f"Nudity detector: {model.name} on {backend}")

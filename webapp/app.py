@@ -63,7 +63,8 @@ def page_job(job_id: int):
     job = jobs.get_job(job_id)
     if job is None:
         return render_template("missing.html", version=APP_VERSION, page="jobs"), 404
-    return render_template("job.html", version=APP_VERSION, page="jobs", job=job)
+    return render_template("job.html", version=APP_VERSION, page="jobs", job=job,
+                           blur_preview_seconds=review.MAX_BLUR_SECONDS)
 
 
 @app.route("/settings")
@@ -595,9 +596,19 @@ def api_blur_clip(job_id: int, index: int):
         return _bad("Blur decision not found.", 404)
     decision = decisions[index]
     options = json.loads(job["options"] or "{}")
+    start = decision["start"]
+    end = decision["end"]
+    if "page" in request.args:
+        try:
+            page = int(request.args["page"])
+        except ValueError:
+            return _bad("Preview segment must be a nonnegative integer.")
+        if page < 0 or page * review.MAX_BLUR_SECONDS >= end - start:
+            return _bad("Preview segment is outside the blur range.")
+        start += page * review.MAX_BLUR_SECONDS
+        end = min(end, start + review.MAX_BLUR_SECONDS)
     try:
-        out = review.blur_clip(job_id, video, decision["start"], decision["end"],
-                               options.get("nudity_model", "accurate"))
+        out = review.blur_clip(job_id, video, start, end, options.get("nudity_model", "accurate"))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return _bad(f"Could not build blur preview: {exc}", 500)
     return send_file(out, mimetype="video/mp4", conditional=True)
